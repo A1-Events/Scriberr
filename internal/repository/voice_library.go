@@ -41,6 +41,12 @@ type VoiceLibraryRepository interface {
 	// ApplyMatchesAsMappings creates SpeakerMapping rows for library matches,
 	// never overwriting an existing (human-made) mapping for the same label.
 	ApplyMatchesAsMappings(ctx context.Context, jobID string, matches map[string]models.Speaker) error
+	// ResweepSuggestions re-matches every non-human-confirmed voiceprint
+	// against the current library, refreshing suggestions on past recordings
+	// after the library changed. It never touches SpeakerMappings (suggestions
+	// only, no silent renames of history). Returns the number of voiceprints
+	// whose suggestion changed.
+	ResweepSuggestions(ctx context.Context) (int, error)
 }
 
 // MatchSuggestion is a library match for one diarized speaker label.
@@ -274,6 +280,68 @@ func (r *voiceLibraryRepository) ApplyMatchesAsMappings(ctx context.Context, job
 		}
 	}
 	return nil
+}
+
+func (r *voiceLibraryRepository) ResweepSuggestions(ctx context.Context) (int, error) {
+	speakers, err := r.ListSpeakers(ctx)
+	if err != nil {
+		return 0, err
+	}
+	centroids := make(map[uint][]float32, len(speakers))
+	for i := range speakers {
+		if c, err := decodeEmbedding(speakers[i].Centroid); err == nil {
+			centroids[speakers[i].ID] = c
+		}
+	}
+
+	// Human-confirmed voiceprints (confidence = 1.0) are ground truth — skip.
+	var prints []models.SpeakerVoiceprint
+	if err := r.db.WithContext(ctx).
+		Where("confidence IS NULL OR confidence < 1.0").
+		Find(&prints).Error; err != nil {
+		return 0, err
+	}
+
+	changed := 0
+	for i := range prints {
+		emb, err := decodeEmbedding(prints[i].Embedding)
+		if err != nil {
+			continue
+		}
+		bestSim := -1.0
+		var bestID *uint
+		for j := range speakers {
+			c, ok := centroids[speakers[j].ID]
+			if !ok {
+				continue
+			}
+			if sim := cosineSimilarity(emb, c); sim > bestSim {
+				bestSim = sim
+				id := speakers[j].ID
+				bestID = &id
+			}
+		}
+		var newID *uint
+		var newConf *float64
+		if bestID != nil && bestSim >= r.threshold {
+			newID, newConf = bestID, &bestSim
+		}
+		oldID := prints[i].MatchedSpeakerID
+		same := (oldID == nil && newID == nil) || (oldID != nil && newID != nil && *oldID == *newID)
+		if same {
+			continue
+		}
+		if err := r.db.WithContext(ctx).Model(&models.SpeakerVoiceprint{}).
+			Where("id = ?", prints[i].ID).
+			Updates(map[string]interface{}{"matched_speaker_id": newID, "confidence": newConf}).Error; err != nil {
+			return changed, err
+		}
+		changed++
+	}
+	if changed > 0 {
+		logger.Info("Voice library resweep updated suggestions", "changed", changed)
+	}
+	return changed, nil
 }
 
 func (r *voiceLibraryRepository) ListSpeakers(ctx context.Context) ([]models.Speaker, error) {

@@ -97,5 +97,25 @@ func (h *Handler) MergeVoiceLibrarySpeakers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to merge speakers: " + err.Error()})
 		return
 	}
+	// Library identity changed — refresh suggestions everywhere
+	if _, err := h.voiceLibraryRepo.ResweepSuggestions(c.Request.Context()); err == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "Speakers merged; suggestions refreshed"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "Speakers merged"})
+}
+
+// ResweepVoiceLibrary re-matches all stored voiceprints against the current
+// library (manual trigger; also runs automatically after renames/merges).
+// @Router /api/v1/voice-library/resweep [post]
+func (h *Handler) ResweepVoiceLibrary(c *gin.Context) {
+	if !h.voiceLibraryEnabled(c) {
+		return
+	}
+	changed, err := h.voiceLibraryRepo.ResweepSuggestions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Resweep failed: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"changed": changed})
 }

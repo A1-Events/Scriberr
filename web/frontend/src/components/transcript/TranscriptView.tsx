@@ -299,9 +299,13 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                                 : "hover:bg-carbon-50 dark:hover:bg-carbon-800/50 border-transparent hover:border-carbon-100 dark:hover:border-carbon-800"
                         )}
                     >
-                        {/* Timestamp & Speaker */}
-                        <div className="flex-shrink-0 w-24 sm:w-28 flex flex-col items-start sm:items-end gap-1 text-xs text-carbon-500 dark:text-carbon-400 select-none mt-1">
-                            <span className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs">
+                        {/* Timestamp & Speaker — click to play from here (A1 fork) */}
+                        <div
+                            className="flex-shrink-0 w-24 sm:w-28 flex flex-col items-start sm:items-end gap-1 text-xs text-carbon-500 dark:text-carbon-400 select-none mt-1 cursor-pointer"
+                            onClick={() => onSeek(segment.start)}
+                            title="Play from here"
+                        >
+                            <span className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs hover:bg-carbon-200 dark:hover:bg-carbon-700 hover:text-carbon-800 dark:hover:text-carbon-200 transition-colors">
                                 {new Date(segment.start * 1000).toISOString().substr(11, 8)}
                             </span>
                             {segment.speaker && (

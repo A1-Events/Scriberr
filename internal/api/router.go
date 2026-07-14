@@ -166,6 +166,7 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			voiceLibrary.PUT("/:id", handler.RenameVoiceLibrarySpeaker)
 			voiceLibrary.DELETE("/:id", handler.DeleteVoiceLibrarySpeaker)
 			voiceLibrary.POST("/merge", handler.MergeVoiceLibrarySpeakers)
+			voiceLibrary.POST("/resweep", handler.ResweepVoiceLibrary)
 		}
 
 		// Profile routes (require authentication)

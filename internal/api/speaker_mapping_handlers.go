@@ -174,6 +174,7 @@ func (h *Handler) UpdateSpeakerMappings(c *gin.Context) {
 	// Voice library learn-on-rename: fold this job's voiceprints into the
 	// named speakers' centroids. Best-effort — renames must not fail on it.
 	if h.voiceLibraryRepo != nil {
+		learned := false
 		for _, mapping := range req.Mappings {
 			if mapping.CustomName == "" {
 				continue
@@ -181,6 +182,15 @@ func (h *Handler) UpdateSpeakerMappings(c *gin.Context) {
 			if err := h.voiceLibraryRepo.LearnFromJob(c.Request.Context(), jobID, mapping.OriginalSpeaker, mapping.CustomName); err != nil {
 				logger.Warn("Voice library learn-on-rename failed",
 					"job_id", jobID, "speaker", mapping.OriginalSpeaker, "error", err)
+			} else {
+				learned = true
+			}
+		}
+		// The library changed — refresh suggestions on past recordings so
+		// newly enrolled voices surface everywhere (suggestions only).
+		if learned {
+			if _, err := h.voiceLibraryRepo.ResweepSuggestions(c.Request.Context()); err != nil {
+				logger.Warn("Voice library resweep failed", "error", err)
 			}
 		}
 	}
