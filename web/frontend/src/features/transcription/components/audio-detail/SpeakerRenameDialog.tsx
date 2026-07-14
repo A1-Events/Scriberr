@@ -13,6 +13,9 @@ interface SpeakerMapping {
   id?: number;
   original_speaker: string;
   custom_name: string;
+  // Voice-library match from previous recordings (fork feature)
+  suggested_name?: string;
+  confidence?: number;
 }
 
 interface SpeakerRenameDialogProps {
@@ -32,6 +35,7 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
 }) => {
   const { getAuthHeaders } = useAuth();
   const [speakerMappings, setSpeakerMappings] = useState<Record<string, string>>({});
+  const [suggestions, setSuggestions] = useState<Record<string, { name: string; confidence: number }>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,20 +57,31 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
 
       // Create a mapping object from the response
       const mappingObj: Record<string, string> = {};
+      const suggestionObj: Record<string, { name: string; confidence: number }> = {};
 
-      // Initialize with existing mappings
+      // Initialize with existing mappings; collect voice-library suggestions
       existingMappings.forEach(mapping => {
-        mappingObj[mapping.original_speaker] = mapping.custom_name;
+        if (mapping.custom_name) {
+          mappingObj[mapping.original_speaker] = mapping.custom_name;
+        }
+        if (mapping.suggested_name) {
+          suggestionObj[mapping.original_speaker] = {
+            name: mapping.suggested_name,
+            confidence: mapping.confidence ?? 0,
+          };
+        }
       });
 
-      // Add any speakers from the transcript that don't have mappings yet
+      // Add any speakers from the transcript that don't have mappings yet.
+      // Prefill with the voice-library suggestion when there is one.
       initialSpeakers.forEach(speaker => {
         if (!mappingObj[speaker]) {
-          mappingObj[speaker] = speaker; // Default to original name
+          mappingObj[speaker] = suggestionObj[speaker]?.name ?? speaker;
         }
       });
 
       setSpeakerMappings(mappingObj);
+      setSuggestions(suggestionObj);
     } catch (err) {
       console.error('Error fetching speaker mappings:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch speaker mappings');
@@ -171,6 +186,14 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                   >
                     <Label htmlFor={`speaker-${speaker}`} className="text-xs font-medium text-muted-foreground">
                       {speaker}
+                      {suggestions[speaker] && (
+                        <span
+                          className="ml-2 inline-flex items-center rounded-full bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800"
+                          title={`Recognized from previous recordings (similarity ${(suggestions[speaker].confidence * 100).toFixed(0)}%)`}
+                        >
+                          matched: {suggestions[speaker].name} · {(suggestions[speaker].confidence * 100).toFixed(0)}%
+                        </span>
+                      )}
                     </Label>
                     <Input
                       id={`speaker-${speaker}`}

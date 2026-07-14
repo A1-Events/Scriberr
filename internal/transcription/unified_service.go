@@ -52,6 +52,12 @@ type UnifiedTranscriptionService struct {
 	jobRepo               repository.JobRepository
 	webhookService        *webhook.Service
 	broadcaster           *sse.Broadcaster
+	voiceLibrary          repository.VoiceLibraryRepository // optional; nil disables the voice library
+}
+
+// SetVoiceLibrary enables cross-recording speaker matching (voice library).
+func (u *UnifiedTranscriptionService) SetVoiceLibrary(repo repository.VoiceLibraryRepository) {
+	u.voiceLibrary = repo
 }
 
 // NewUnifiedTranscriptionService creates a new unified transcription service
@@ -298,6 +304,13 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		// Convert parameters for this specific model
 		params := u.convertParametersForModel(job.Parameters, transcriptionModelID)
 
+		// When a separate diarization step will run (e.g. two-step
+		// whisper+pyannote for the voice library), the transcription adapter
+		// must not also diarize internally.
+		if job.Parameters.Diarize && !u.transcriptionIncludesDiarization(transcriptionModelID, job.Parameters) {
+			params["diarize"] = false
+		}
+
 		transcriptResult, err = transcriptionAdapter.Transcribe(ctx, preprocessedInput, params, procCtx)
 		if err != nil {
 			return fmt.Errorf("transcription failed: %w", err)
@@ -325,6 +338,19 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 			// Merge diarization results with transcription
 			if transcriptResult != nil && diarizationResult != nil {
 				transcriptResult = u.mergeDiarizationWithTranscription(transcriptResult, diarizationResult)
+			}
+
+			// Voice library: persist voiceprints and auto-name speakers that
+			// match known voices. Failures never fail the job.
+			if u.voiceLibrary != nil && diarizationResult != nil && len(diarizationResult.SpeakerEmbeddings) > 0 {
+				matches, vlErr := u.voiceLibrary.StoreVoiceprints(ctx, job.ID, diarizationResult.SpeakerEmbeddings)
+				if vlErr != nil {
+					logger.Warn("Voice library voiceprint storage failed", "job_id", job.ID, "error", vlErr)
+				} else if len(matches) > 0 {
+					if vlErr := u.voiceLibrary.ApplyMatchesAsMappings(ctx, job.ID, matches); vlErr != nil {
+						logger.Warn("Voice library mapping application failed", "job_id", job.ID, "error", vlErr)
+					}
+				}
 			}
 		}
 	}
@@ -415,11 +441,15 @@ func (u *UnifiedTranscriptionService) selectModels(params models.WhisperXParams)
 // transcriptionIncludesDiarization checks if the transcription model already includes diarization
 func (u *UnifiedTranscriptionService) transcriptionIncludesDiarization(modelID string, params models.WhisperXParams) bool {
 	// WhisperX includes diarization when enabled
-	// WhisperX includes diarization when enabled
 	if modelID == ModelWhisperX {
 		if params.Diarize {
-			// Check if it's using nvidia_sortformer (which requires separate processing)
-			if params.DiarizeModel == DiarizeSortformer {
+			// nvidia_sortformer requires separate processing. The bare
+			// "pyannote" adapter id also routes to the standalone pyannote
+			// adapter (two-step): that path supports speaker embeddings for
+			// the voice library and runs community-1. Full HF model names
+			// (e.g. "pyannote/speaker-diarization-3.1") keep WhisperX's
+			// internal diarization for backward compatibility.
+			if params.DiarizeModel == DiarizeSortformer || params.DiarizeModel == ModelPyannote {
 				return false
 			}
 			return true
@@ -732,6 +762,11 @@ func (u *UnifiedTranscriptionService) convertToPyannoteParams(params models.Whis
 	}
 	if params.VadOffset > 0 {
 		paramMap["segmentation_offset"] = params.VadOffset
+	}
+
+	// Voice library: per-speaker embeddings for cross-recording matching
+	if params.SpeakerEmbeddings {
+		paramMap["speaker_embeddings"] = true
 	}
 
 	return paramMap

@@ -47,11 +47,17 @@ type Handler struct {
 	noteRepo            repository.NoteRepository
 	speakerMappingRepo  repository.SpeakerMappingRepository
 	refreshTokenRepo    repository.RefreshTokenRepository
+	voiceLibraryRepo    repository.VoiceLibraryRepository // optional; nil disables voice library
 	taskQueue           *queue.TaskQueue
 	unifiedProcessor    *transcription.UnifiedJobProcessor
 	quickTranscription  *transcription.QuickTranscriptionService
 	multiTrackProcessor *processing.MultiTrackProcessor
 	broadcaster         *sse.Broadcaster
+}
+
+// SetVoiceLibrary enables the voice library endpoints and rename-learning.
+func (h *Handler) SetVoiceLibrary(repo repository.VoiceLibraryRepository) {
+	h.voiceLibraryRepo = repo
 }
 
 // NewHandler creates a new handler

@@ -406,6 +406,11 @@ func (p *PyAnnoteAdapter) buildPyAnnoteArgs(input interfaces.AudioInput, params 
 		args = append(args, "--segmentation-offset", fmt.Sprintf("%.3f", offset))
 	}
 
+	// Voice library: request per-speaker embeddings (JSON output only)
+	if p.GetBoolParameter(params, "speaker_embeddings") && outputFormat == OutputFormatJSON {
+		args = append(args, "--embeddings")
+	}
+
 	// Device is handled automatically by the script
 
 	return args, nil
@@ -440,9 +445,10 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 			Confidence float64 `json:"confidence"`
 			Duration   float64 `json:"duration"`
 		} `json:"segments"`
-		Speakers      []string `json:"speakers"`
-		SpeakerCount  int      `json:"speaker_count"`
-		TotalDuration float64  `json:"total_duration"`
+		Speakers      []string             `json:"speakers"`
+		SpeakerCount  int                  `json:"speaker_count"`
+		TotalDuration float64              `json:"total_duration"`
+		Embeddings    map[string][]float32 `json:"embeddings"`
 	}
 
 	if err := json.Unmarshal(data, &pyannoteResult); err != nil {
@@ -451,9 +457,11 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 
 	// Convert to standard format
 	result := &interfaces.DiarizationResult{
-		Segments:     make([]interfaces.DiarizationSegment, len(pyannoteResult.Segments)),
-		SpeakerCount: pyannoteResult.SpeakerCount,
-		Speakers:     pyannoteResult.Speakers,
+		Segments:          make([]interfaces.DiarizationSegment, len(pyannoteResult.Segments)),
+		SpeakerCount:      pyannoteResult.SpeakerCount,
+		Speakers:          pyannoteResult.Speakers,
+		ModelUsed:         pyannoteResult.Model,
+		SpeakerEmbeddings: pyannoteResult.Embeddings,
 	}
 
 	for i, seg := range pyannoteResult.Segments {

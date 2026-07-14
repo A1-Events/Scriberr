@@ -101,6 +101,10 @@ type DiarizationResult struct {
 	ProcessingTime time.Duration        `json:"processing_time"`
 	ModelUsed      string               `json:"model_used"`
 	Metadata       map[string]string    `json:"metadata"`
+	// SpeakerEmbeddings maps diarization labels (e.g. "SPEAKER_00") to voice
+	// embedding vectors when the adapter was asked to produce them (voice
+	// library feature). Nil when not requested or unsupported.
+	SpeakerEmbeddings map[string][]float32 `json:"speaker_embeddings,omitempty"`
 }
 
 // ProcessingContext contains context information for processing

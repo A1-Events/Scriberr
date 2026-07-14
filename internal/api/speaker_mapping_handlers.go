@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"scriberr/internal/models"
+	"scriberr/internal/repository"
+	"scriberr/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -20,11 +22,15 @@ type SpeakerMappingsUpdateRequest struct {
 	Mappings []SpeakerMappingRequest `json:"mappings" binding:"required"`
 }
 
-// SpeakerMappingResponse represents a speaker mapping response
+// SpeakerMappingResponse represents a speaker mapping response. SuggestedName
+// and Confidence are voice-library matches (present only when the library
+// recognized this voice from previous recordings).
 type SpeakerMappingResponse struct {
-	ID              uint   `json:"id"`
-	OriginalSpeaker string `json:"original_speaker"`
-	CustomName      string `json:"custom_name"`
+	ID              uint     `json:"id"`
+	OriginalSpeaker string   `json:"original_speaker"`
+	CustomName      string   `json:"custom_name"`
+	SuggestedName   *string  `json:"suggested_name,omitempty"`
+	Confidence      *float64 `json:"confidence,omitempty"`
 }
 
 // GetSpeakerMappings retrieves all speaker mappings for a transcription
@@ -68,14 +74,41 @@ func (h *Handler) GetSpeakerMappings(c *gin.Context) {
 		return
 	}
 
+	// Voice-library suggestions for this job (nil-safe when disabled)
+	suggestions := map[string]repository.MatchSuggestion{}
+	if h.voiceLibraryRepo != nil {
+		if s, err := h.voiceLibraryRepo.SuggestionsForJob(c.Request.Context(), jobID); err == nil {
+			suggestions = s
+		}
+	}
+
 	// Convert to response format
 	response := make([]SpeakerMappingResponse, len(mappings))
+	seen := make(map[string]bool, len(mappings))
 	for i, mapping := range mappings {
 		response[i] = SpeakerMappingResponse{
 			ID:              mapping.ID,
 			OriginalSpeaker: mapping.OriginalSpeaker,
 			CustomName:      mapping.CustomName,
 		}
+		seen[mapping.OriginalSpeaker] = true
+		if s, ok := suggestions[mapping.OriginalSpeaker]; ok {
+			name, conf := s.Name, s.Confidence
+			response[i].SuggestedName = &name
+			response[i].Confidence = &conf
+		}
+	}
+	// Surface suggestions for labels the user has not named yet
+	for label, s := range suggestions {
+		if seen[label] {
+			continue
+		}
+		name, conf := s.Name, s.Confidence
+		response = append(response, SpeakerMappingResponse{
+			OriginalSpeaker: label,
+			SuggestedName:   &name,
+			Confidence:      &conf,
+		})
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -136,6 +169,20 @@ func (h *Handler) UpdateSpeakerMappings(c *gin.Context) {
 	if err := h.speakerMappingRepo.UpdateMappings(c.Request.Context(), jobID, mappings); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update speaker mappings"})
 		return
+	}
+
+	// Voice library learn-on-rename: fold this job's voiceprints into the
+	// named speakers' centroids. Best-effort — renames must not fail on it.
+	if h.voiceLibraryRepo != nil {
+		for _, mapping := range req.Mappings {
+			if mapping.CustomName == "" {
+				continue
+			}
+			if err := h.voiceLibraryRepo.LearnFromJob(c.Request.Context(), jobID, mapping.OriginalSpeaker, mapping.CustomName); err != nil {
+				logger.Warn("Voice library learn-on-rename failed",
+					"job_id", jobID, "speaker", mapping.OriginalSpeaker, "error", err)
+			}
+		}
 	}
 
 	// Fetch updated mappings to return

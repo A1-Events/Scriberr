@@ -158,6 +158,16 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			transcription.GET("/quick/:id", handler.GetQuickTranscriptionStatus)
 		}
 
+		// Voice library routes (require authentication)
+		voiceLibrary := v1.Group("/voice-library")
+		voiceLibrary.Use(middleware.AuthMiddleware(authService))
+		{
+			voiceLibrary.GET("", handler.ListVoiceLibrarySpeakers)
+			voiceLibrary.PUT("/:id", handler.RenameVoiceLibrarySpeaker)
+			voiceLibrary.DELETE("/:id", handler.DeleteVoiceLibrarySpeaker)
+			voiceLibrary.POST("/merge", handler.MergeVoiceLibrarySpeakers)
+		}
+
 		// Profile routes (require authentication)
 		profiles := v1.Group("/profiles")
 		profiles.Use(middleware.AuthMiddleware(authService))

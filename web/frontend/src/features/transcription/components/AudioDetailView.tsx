@@ -44,7 +44,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [newTitle, setNewTitle] = useState("");
 
     // Lifted Transcript State
-    const [transcriptMode, setTranscriptMode] = useState<"compact" | "expanded">("compact");
+    const [transcriptMode, setTranscriptMode] = useState<"compact" | "expanded">("expanded"); // A1 fork: speaker-labeled view by default
     const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
     const [notesOpen, setNotesOpen] = useState(false);
     const [speakerRenameOpen, setSpeakerRenameOpen] = useState(false);

@@ -35,6 +35,7 @@ def diarize_audio(
     device: str = "auto",
     segmentation_onset: float = None,
     segmentation_offset: float = None,
+    include_embeddings: bool = False,
 ):
     """
     Perform speaker diarization on audio file using PyAnnote.
@@ -103,22 +104,43 @@ def diarize_audio(
         if max_speakers is not None:
             diarization_params["max_speakers"] = max_speakers
 
+        if include_embeddings:
+            diarization_params["return_embeddings"] = True
+
         if diarization_params:
-            print(f"Using speaker constraints: {diarization_params}")
-            diarization = pipeline(audio_path, **diarization_params)
+            print(f"Using diarization params: {sorted(diarization_params)}")
+            result = pipeline(audio_path, **diarization_params)
         else:
             print("Using automatic speaker detection")
-            diarization = pipeline(audio_path)
+            result = pipeline(audio_path)
+
+        # With return_embeddings=True, pyannote 3.x returns (annotation, matrix);
+        # pyannote 4.x returns an output object carrying an `embeddings` attribute.
+        embeddings_map = None
+        diarization = result
+        if include_embeddings:
+            if isinstance(result, tuple) and len(result) == 2:
+                diarization, emb_matrix = result
+            else:
+                # pyannote 4.x DiarizeOutput exposes `speaker_embeddings`
+                emb_matrix = getattr(result, "speaker_embeddings", None)
+                if emb_matrix is None:
+                    emb_matrix = getattr(result, "embeddings", None)
+            embeddings_map = build_embeddings_map(diarization, emb_matrix)
+            if embeddings_map is None:
+                print("Warning: embeddings requested but pipeline returned none")
 
         print(f"Diarization completed. Saving results to: {output_file}")
 
         if output_format == "rttm":
-            # Save the diarization output to RTTM format
+            # Save the diarization output to RTTM format (embeddings not
+            # representable in RTTM; JSON format required for them)
             with open(output_file, "w") as rttm:
                 diarization.write_rttm(rttm)
         else:
             # Save as JSON format
-            save_json_format(diarization, output_file, audio_path)
+            save_json_format(diarization, output_file, audio_path,
+                             embeddings_map=embeddings_map, model=model)
 
         # Print summary
         speakers = set()
@@ -152,7 +174,36 @@ def diarize_audio(
         sys.exit(1)
 
 
-def save_json_format(diarization, output_file: str, audio_path: str):
+def build_embeddings_map(diarization, emb_matrix):
+    """Map speaker labels to their embedding vectors.
+
+    pyannote orders embedding rows the same way as the annotation's labels().
+    Handles both a raw Annotation and the 4.x output object.
+    """
+    if emb_matrix is None:
+        return None
+    ann = getattr(diarization, "speaker_diarization", diarization)
+    if not hasattr(ann, "labels"):
+        return None
+    try:
+        import numpy as np
+        matrix = np.asarray(emb_matrix)
+        labels = list(ann.labels())
+        if matrix.ndim != 2 or matrix.shape[0] != len(labels):
+            print(f"Warning: embedding matrix shape {matrix.shape} does not match "
+                  f"{len(labels)} speakers — skipping embeddings")
+            return None
+        return {
+            label: [float(x) for x in matrix[i]]
+            for i, label in enumerate(labels)
+        }
+    except Exception as e:
+        print(f"Warning: failed to build embeddings map: {e}")
+        return None
+
+
+def save_json_format(diarization, output_file: str, audio_path: str,
+                     embeddings_map=None, model: str = "pyannote/speaker-diarization-community-1"):
     """Save diarization results in JSON format."""
     segments = []
     speakers = set()
@@ -185,7 +236,7 @@ def save_json_format(diarization, output_file: str, audio_path: str):
 
     results = {
         "audio_file": audio_path,
-        "model": "pyannote/speaker-diarization-community-1",
+        "model": model,
         "segments": segments,
         "speakers": sorted(speakers),
         "speaker_count": len(speakers),
@@ -195,6 +246,9 @@ def save_json_format(diarization, output_file: str, audio_path: str):
             "total_speech_time": sum(seg["duration"] for seg in segments)
         }
     }
+
+    if embeddings_map:
+        results["embeddings"] = embeddings_map
 
     with open(output_file, "w") as f:
         json.dump(results, f, indent=2)
@@ -255,6 +309,11 @@ def main():
         type=float,
         help="Voice activity detection offset/min_duration_off (0.0-1.0). Lower values are more sensitive to speech endings."
     )
+    parser.add_argument(
+        "--embeddings",
+        action="store_true",
+        help="Include per-speaker voice embeddings in JSON output (requires --output-format json)"
+    )
 
     args = parser.parse_args()
 
@@ -293,6 +352,7 @@ def main():
             device=args.device,
             segmentation_onset=args.segmentation_onset,
             segmentation_offset=args.segmentation_offset,
+            include_embeddings=args.embeddings,
         )
     except Exception as e:
         print(f"Error during diarization: {e}")
