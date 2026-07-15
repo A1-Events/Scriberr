@@ -523,6 +523,12 @@ func (w *WhisperXAdapter) buildWhisperXArgs(input interfaces.AudioInput, params 
 		args = append(args, "--language", language)
 	}
 
+	// Hotwords: bias the decoder toward domain vocabulary (glossary). WhisperX
+	// exposes this as --initial_prompt.
+	if prompt := w.GetStringParameter(params, "initial_prompt"); prompt != "" {
+		args = append(args, "--initial_prompt", prompt)
+	}
+
 	// VAD settings
 	args = append(args, "--vad_method", w.GetStringParameter(params, "vad_method"))
 	args = append(args, "--vad_onset", fmt.Sprintf("%.3f", w.GetFloatParameter(params, "vad_onset")))
