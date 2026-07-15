@@ -120,6 +120,7 @@ func main() {
 	unifiedProcessor := transcription.NewUnifiedJobProcessor(jobRepo, cfg.TempDir, cfg.TranscriptsDir)
 	unifiedProcessor.GetUnifiedService().SetBroadcaster(broadcaster)
 	unifiedProcessor.GetUnifiedService().SetVoiceLibrary(voiceLibraryRepo)
+	unifiedProcessor.GetUnifiedService().SetLLMConfig(llmConfigRepo)
 
 	// Bootstrap embedded Python environment (for all adapters)
 	logger.Startup("python", "Preparing Python environment")

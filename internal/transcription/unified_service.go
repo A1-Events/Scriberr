@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"scriberr/internal/llm"
 	"scriberr/internal/models"
 	"scriberr/internal/repository"
 	"scriberr/internal/sse"
@@ -53,11 +54,60 @@ type UnifiedTranscriptionService struct {
 	webhookService        *webhook.Service
 	broadcaster           *sse.Broadcaster
 	voiceLibrary          repository.VoiceLibraryRepository // optional; nil disables the voice library
+	llmConfigRepo         repository.LLMConfigRepository    // optional; enables glossary hotwords + LLM correction
 }
 
 // SetVoiceLibrary enables cross-recording speaker matching (voice library).
 func (u *UnifiedTranscriptionService) SetVoiceLibrary(repo repository.VoiceLibraryRepository) {
 	u.voiceLibrary = repo
+}
+
+// SetLLMConfig enables the domain-glossary features (hotwords + LLM correction).
+func (u *UnifiedTranscriptionService) SetLLMConfig(repo repository.LLMConfigRepository) {
+	u.llmConfigRepo = repo
+}
+
+// glossaryTerms returns the dynamic glossary terms (voice-library speaker
+// names) folded into the static TRANSCRIPT_GLOSSARY.
+func (u *UnifiedTranscriptionService) effectiveGlossary(ctx context.Context) string {
+	var names []string
+	if u.voiceLibrary != nil {
+		if speakers, err := u.voiceLibrary.ListSpeakers(ctx); err == nil {
+			for _, s := range speakers {
+				names = append(names, s.Name)
+			}
+		}
+	}
+	return buildGlossary(names)
+}
+
+// llmServiceForCorrection builds the configured LLM service (mirrors the API
+// handler's getLLMService). Returns nil if no usable config.
+func (u *UnifiedTranscriptionService) llmServiceForCorrection(ctx context.Context) (llm.Service, string) {
+	if u.llmConfigRepo == nil {
+		return nil, ""
+	}
+	cfg, err := u.llmConfigRepo.GetActive(ctx)
+	if err != nil || cfg == nil {
+		return nil, ""
+	}
+	// The correction model is env-configured (there is no server-side default
+	// model on LLMConfig — the app takes it per-request elsewhere).
+	model := os.Getenv("TRANSCRIPT_CORRECTION_MODEL")
+	if model == "" {
+		return nil, ""
+	}
+	switch strings.ToLower(cfg.Provider) {
+	case "openai":
+		if cfg.APIKey != nil && *cfg.APIKey != "" {
+			return llm.NewOpenAIService(*cfg.APIKey, cfg.OpenAIBaseURL), model
+		}
+	case "ollama":
+		if cfg.BaseURL != nil && *cfg.BaseURL != "" {
+			return llm.NewOllamaService(*cfg.BaseURL), model
+		}
+	}
+	return nil, ""
 }
 
 // NewUnifiedTranscriptionService creates a new unified transcription service
@@ -293,6 +343,15 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	var transcriptResult *interfaces.TranscriptResult
 	var diarizationResult *interfaces.DiarizationResult
 
+	// Hotwords: bias the ASR toward domain vocabulary by seeding initial_prompt
+	// with the glossary (static TRANSCRIPT_GLOSSARY + voice-library names) when
+	// the job hasn't set its own prompt.
+	glossary := u.effectiveGlossary(ctx)
+	if glossary != "" && (job.Parameters.InitialPrompt == nil || strings.TrimSpace(*job.Parameters.InitialPrompt) == "") {
+		job.Parameters.InitialPrompt = &glossary
+		logger.Info("Applied glossary as ASR hotwords", "terms_len", len(glossary))
+	}
+
 	// Perform transcription using the preprocessed audio
 	if transcriptionModelID != "" {
 		logger.Info("Running transcription", "model_id", transcriptionModelID)
@@ -359,6 +418,17 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	// before persisting — applies to every adapter since it works on text.
 	if transcriptResult != nil {
 		filterHallucinations(transcriptResult, hallucinationConfigFromEnv())
+	}
+
+	// LLM post-correction: fix mis-heard domain terms using the glossary
+	// (opt-in via TRANSCRIPT_CORRECTION=on; needs an active LLM config +
+	// TRANSCRIPT_CORRECTION_MODEL). Fail-safe — never corrupts on error.
+	if transcriptResult != nil && correctionEnabled() {
+		if svc, model := u.llmServiceForCorrection(ctx); svc != nil {
+			correctTranscript(ctx, transcriptResult, glossary, svc, model)
+		} else {
+			logger.Info("Transcript correction enabled but no usable LLM config/model — skipping")
+		}
 	}
 
 	// Save results to database
