@@ -355,6 +355,12 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		}
 	}
 
+	// Drop hallucinated segments (stock caption phrases / repetition loops)
+	// before persisting — applies to every adapter since it works on text.
+	if transcriptResult != nil {
+		filterHallucinations(transcriptResult, hallucinationConfigFromEnv())
+	}
+
 	// Save results to database
 	if transcriptResult != nil {
 		if err := u.saveTranscriptionResults(job.ID, transcriptResult); err != nil {
