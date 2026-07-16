@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,9 @@ import (
 	"scriberr/internal/transcription/interfaces"
 	"scriberr/pkg/logger"
 )
+
+//go:embed py/whisperx/*
+var whisperxScripts embed.FS
 
 // WhisperXAdapter implements the TranscriptionAdapter interface for WhisperX
 type WhisperXAdapter struct {
@@ -411,6 +415,20 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 	}
 	defer w.CleanupTempDirectory(tempDir)
 
+	// Resolve the language ourselves when the caller left it unset, rather than
+	// letting WhisperX decide it from the first 30s alone (see detectLanguage).
+	// Copy params instead of mutating the caller's map.
+	if w.GetStringParameter(params, "language") == "" {
+		if lang := w.detectLanguage(ctx, input, params); lang != "" {
+			resolved := make(map[string]interface{}, len(params)+1)
+			for k, v := range params {
+				resolved[k] = v
+			}
+			resolved["language"] = lang
+			params = resolved
+		}
+	}
+
 	// Build WhisperX command
 	args, err := w.buildWhisperXArgs(input, params, tempDir)
 	if err != nil {
@@ -419,32 +437,7 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 
 	// Execute WhisperX
 	cmd := exec.CommandContext(ctx, "uv", args...)
-
-	// Add nvidia libraries to LD_LIBRARY_PATH
-	env := os.Environ()
-	if nvidiaPaths, err := w.findNvidiaLibPaths(); err == nil && len(nvidiaPaths) > 0 {
-		ldLibraryPath := os.Getenv("LD_LIBRARY_PATH")
-		newPath := strings.Join(nvidiaPaths, string(os.PathListSeparator))
-		if ldLibraryPath != "" {
-			newPath = newPath + string(os.PathListSeparator) + ldLibraryPath
-		}
-
-		// Update LD_LIBRARY_PATH in env
-		found := false
-		for i, e := range env {
-			if strings.HasPrefix(e, "LD_LIBRARY_PATH=") {
-				env[i] = "LD_LIBRARY_PATH=" + newPath
-				found = true
-				break
-			}
-		}
-		if !found {
-			env = append(env, "LD_LIBRARY_PATH="+newPath)
-		}
-		logger.Debug("Updated LD_LIBRARY_PATH for WhisperX", "path", newPath)
-	}
-
-	cmd.Env = append(env, "PYTHONUNBUFFERED=1")
+	cmd.Env = w.whisperxEnv()
 
 	// Setup log file
 	logFile, err := os.OpenFile(filepath.Join(procCtx.OutputDirectory, "transcription.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -490,6 +483,98 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 		"processing_time", result.ProcessingTime)
 
 	return result, nil
+}
+
+// whisperxEnv returns the process environment for WhisperX subprocesses, with
+// the wheel-provided nvidia libraries prepended to LD_LIBRARY_PATH so CUDA
+// resolves. Shared by transcription and language detection — they must load the
+// same CUDA stack, so this cannot be allowed to drift between the two.
+func (w *WhisperXAdapter) whisperxEnv() []string {
+	env := os.Environ()
+	if nvidiaPaths, err := w.findNvidiaLibPaths(); err == nil && len(nvidiaPaths) > 0 {
+		ldLibraryPath := os.Getenv("LD_LIBRARY_PATH")
+		newPath := strings.Join(nvidiaPaths, string(os.PathListSeparator))
+		if ldLibraryPath != "" {
+			newPath = newPath + string(os.PathListSeparator) + ldLibraryPath
+		}
+
+		found := false
+		for i, e := range env {
+			if strings.HasPrefix(e, "LD_LIBRARY_PATH=") {
+				env[i] = "LD_LIBRARY_PATH=" + newPath
+				found = true
+				break
+			}
+		}
+		if !found {
+			env = append(env, "LD_LIBRARY_PATH="+newPath)
+		}
+		logger.Debug("Updated LD_LIBRARY_PATH for WhisperX", "path", newPath)
+	}
+	return append(env, "PYTHONUNBUFFERED=1")
+}
+
+// copyLanguageDetectScript materialises the detection helper into the env, the
+// same way the pyannote adapter does with its diarization script.
+func (w *WhisperXAdapter) copyLanguageDetectScript() (string, error) {
+	content, err := whisperxScripts.ReadFile("py/whisperx/detect_language.py")
+	if err != nil {
+		return "", fmt.Errorf("failed to read embedded detect_language.py: %w", err)
+	}
+	scriptPath := filepath.Join(w.envPath, "detect_language.py")
+	if err := os.WriteFile(scriptPath, content, 0755); err != nil {
+		return "", fmt.Errorf("failed to write detect_language.py: %w", err)
+	}
+	return scriptPath, nil
+}
+
+// detectLanguage resolves the spoken language by sampling several windows of the
+// audio, and returns "" if it cannot.
+//
+// WhisperX's built-in detection reads only the first 30s and ignores the
+// probability it gets back, so an unrepresentative opening silently decides the
+// whole file — and Whisper TRANSLATES when handed the wrong language, producing
+// fluent output in the wrong language rather than an obvious error. See
+// py/whisperx/detect_language.py for the measurements.
+//
+// Returning "" is always safe: the caller then passes no --language and WhisperX
+// falls back to its own detection, i.e. exactly the previous behaviour. Detection
+// must never be able to fail a transcription that would otherwise have run.
+func (w *WhisperXAdapter) detectLanguage(ctx context.Context, input interfaces.AudioInput, params map[string]interface{}) string {
+	scriptPath, err := w.copyLanguageDetectScript()
+	if err != nil {
+		logger.Warn("Language detection unavailable, deferring to WhisperX", "error", err)
+		return ""
+	}
+
+	args := []string{
+		"run", "--native-tls", "--project", filepath.Join(w.envPath, "WhisperX"),
+		"python", scriptPath, input.FilePath,
+		"--model", w.GetStringParameter(params, "model"),
+		"--device", w.GetStringParameter(params, "device"),
+		"--device-index", strconv.Itoa(w.GetIntParameter(params, "device_index")),
+		"--compute-type", w.GetStringParameter(params, "compute_type"),
+	}
+	if modelDir := w.GetStringParameter(params, "model_dir"); modelDir != "" {
+		args = append(args, "--model-dir", modelDir)
+	}
+
+	cmd := exec.CommandContext(ctx, "uv", args...)
+	cmd.Env = w.whisperxEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		logger.Warn("Language detection failed, deferring to WhisperX", "error", err)
+		return ""
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		if lang, ok := strings.CutPrefix(strings.TrimSpace(line), "LANG="); ok && lang != "" {
+			logger.Info("Detected language by sampling", "language", lang)
+			return lang
+		}
+	}
+	logger.Warn("Language detection returned no language, deferring to WhisperX")
+	return ""
 }
 
 // buildWhisperXArgs builds the command arguments for WhisperX
