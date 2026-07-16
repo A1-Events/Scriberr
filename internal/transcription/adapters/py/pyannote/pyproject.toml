@@ -17,8 +17,13 @@ dev = [
 ]
 
 [tool.uv]
+# Keep this version bound. torchcodec resolves from PyPI, not the cu126 pytorch
+# index used for torch below, so an unbounded override silently picks up a build
+# compiled against a newer CUDA than torch: 0.15.0 links libnvrtc.so.13, which is
+# absent alongside cu126 torch and only fails at diarization runtime. 0.7.x is the
+# line verified against torch 2.8.0+cu126 (it is also what the WhisperX env pins).
 override-dependencies = [
-    "torchcodec ; sys_platform != 'linux' or platform_machine != 'aarch64'"
+    "torchcodec~=0.7.0 ; sys_platform != 'linux' or platform_machine != 'aarch64'"
 ]
 
 [tool.uv.sources]
