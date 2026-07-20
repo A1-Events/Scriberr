@@ -185,6 +185,65 @@ export function useLogs(audioId: string) {
     });
 }
 
+/**
+ * Re-transcribe an existing recording, optionally overriding the language.
+ *
+ * The backend's POST /transcription/:id/start handler resets its parameters to
+ * CPU/`small` defaults and only applies what the request body sends — it does NOT
+ * merge with the job's stored params. So we must GET the job's current parameters
+ * and resend the FULL params object with only `language` overridden, otherwise the
+ * job silently downgrades off the GPU and to a smaller model.
+ *
+ * `language`: an ISO code (e.g. "ro"), or null to restore WhisperX auto-detect.
+ */
+export function useRetranscribe(audioId: string) {
+    const { getAuthHeaders } = useAuth();
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (language: string | null) => {
+            // Re-fetch the job's current params so we resend them verbatim.
+            const jobResponse = await fetch(`/api/v1/transcription/${audioId}`, {
+                headers: getAuthHeaders(),
+            });
+            if (!jobResponse.ok) {
+                throw new Error("Failed to load current transcription settings");
+            }
+            const job = (await jobResponse.json()) as AudioFile;
+
+            // Full stored params, with only `language` overridden (null = auto-detect).
+            const params = {
+                ...(job.parameters || {}),
+                language,
+            };
+
+            const response = await fetch(`/api/v1/transcription/${audioId}/start`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...getAuthHeaders(),
+                },
+                body: JSON.stringify(params),
+            });
+            if (!response.ok) {
+                const msg = await response.text();
+                throw new Error(msg || "Failed to start re-transcription");
+            }
+            return response.json();
+        },
+        onSuccess: () => {
+            // Job is now pending → useAudioDetail's poll picks up live status/progress.
+            // Clear stale results so the UI refreshes once the new run completes.
+            queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
+            queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
+            queryClient.invalidateQueries({ queryKey: ["executionData", audioId] });
+            queryClient.invalidateQueries({ queryKey: ["logs", audioId] });
+            queryClient.invalidateQueries({ queryKey: ["summary", audioId] });
+            queryClient.invalidateQueries({ queryKey: ["audioFiles"] }); // Update list too
+        },
+    });
+}
+
 export function useUpdateTitle(audioId: string) {
     const { getAuthHeaders } = useAuth();
     const queryClient = useQueryClient();
