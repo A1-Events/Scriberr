@@ -496,6 +496,41 @@
       "summary": "Save summary settings",
       "description": "Create or update global summarization settings",
       "tag": "summaries"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/voice-library",
+      "summary": "",
+      "description": "",
+      "tag": ""
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/voice-library/{id}",
+      "summary": "",
+      "description": "",
+      "tag": ""
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/voice-library/{id}",
+      "summary": "",
+      "description": "",
+      "tag": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/voice-library/merge",
+      "summary": "",
+      "description": "",
+      "tag": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/voice-library/resweep",
+      "summary": "",
+      "description": "",
+      "tag": ""
     }
   ]
 }
