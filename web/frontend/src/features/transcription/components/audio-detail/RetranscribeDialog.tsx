@@ -43,16 +43,57 @@ const LANGUAGES: { value: string; label: string }[] = [
     { value: "ja", label: "Japanese" },
 ];
 
-// NVIDIA Canary only supports these four, and it has no auto-detect: the
-// backend maps `language` to `source_lang` and defaults it to "en" when unset,
-// and CanaryAdapter rejects anything outside this list at processing time.
-// Mirrors CANARY_LANGUAGES in TranscriptionConfigDialog.
+// NVIDIA Canary only supports these four. Mirrors CANARY_LANGUAGES in
+// TranscriptionConfigDialog.
 const CANARY_LANGUAGES: { value: string; label: string }[] = [
     { value: "en", label: "English" },
     { value: "de", label: "German" },
     { value: "es", label: "Spanish" },
     { value: "fr", label: "French" },
 ];
+
+interface LanguageSupport {
+    /** Selectable languages. Empty means the engine ignores `language` entirely. */
+    options: { value: string; label: string }[];
+    /** What "Auto-detect" must post for this engine, when it offers one. */
+    autoValue: string | null;
+    note?: string;
+}
+
+/**
+ * How each engine actually treats the `language` parameter. Mirrors the
+ * convertTo*Params functions in internal/transcription/unified_service.go —
+ * offering a choice the engine ignores or rejects would report success and then
+ * silently do something else.
+ */
+function languageSupportFor(modelFamily?: string): LanguageSupport {
+    switch (modelFamily) {
+        case "nvidia_parakeet":
+            // convertToParakeetParams never forwards params.Language: the model is
+            // English-only, so any override here would be a no-op.
+            return {
+                options: [],
+                autoValue: null,
+                note: "This recording runs on NVIDIA Parakeet, which transcribes English only — its language cannot be overridden.",
+            };
+        case "nvidia_canary":
+            // convertToCanaryParams maps language -> source_lang and falls back to
+            // "en" when unset; CanaryAdapter rejects anything outside this list and
+            // the model has no auto-detect.
+            return {
+                options: CANARY_LANGUAGES,
+                autoValue: null,
+                note: "This recording runs on NVIDIA Canary, which needs an explicit source language and only supports these four.",
+            };
+        case "mistral_voxtral":
+            // convertToVoxtralParams turns a nil language into "en", so auto-detect
+            // has to be posted as the literal string rather than cleared.
+            return { options: LANGUAGES, autoValue: AUTO };
+        default:
+            // WhisperX and OpenAI both treat an absent language as auto-detect.
+            return { options: LANGUAGES, autoValue: null };
+    }
+}
 
 interface RetranscribeDialogProps {
     audioId: string;
@@ -68,15 +109,18 @@ export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage, 
     const { toast } = useToast();
     const { mutate: retranscribe, isPending } = useRetranscribe(audioId);
 
-    // Canary can neither auto-detect nor handle the full list, so offer only what
-    // the engine actually accepts rather than letting the job fail mid-processing.
-    const isCanary = modelFamily === "nvidia_canary";
-    const languageOptions = isCanary ? CANARY_LANGUAGES : LANGUAGES;
+    const support = languageSupportFor(modelFamily);
+    const languageOptions = support.options;
+    const canOverrideLanguage = languageOptions.length > 0;
+    const offersAuto = languageOptions.some((l) => l.value === AUTO);
 
     const defaultLanguage = (() => {
-        if (!isCanary) return currentLanguage || AUTO;
-        // Fall back to English if the stored language is one Canary cannot run.
-        return CANARY_LANGUAGES.some((l) => l.value === currentLanguage) ? (currentLanguage as string) : "en";
+        if (offersAuto) return currentLanguage || AUTO;
+        // Fixed-list engines: fall back to the first option if the stored language
+        // is one this engine cannot run.
+        return languageOptions.some((l) => l.value === currentLanguage)
+            ? (currentLanguage as string)
+            : (languageOptions[0]?.value ?? AUTO);
     })();
 
     const [language, setLanguage] = useState<string>(defaultLanguage);
@@ -89,16 +133,24 @@ export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage, 
     }, [isOpen, defaultLanguage]);
 
     const handleRetranscribe = () => {
-        // Canary always needs an explicit source language; never send null.
-        const chosen = language === AUTO ? null : language;
+        // Engines that ignore `language` keep whatever the job already stored, so a
+        // plain re-run never rewrites their config.
+        const chosen = !canOverrideLanguage
+            ? currentLanguage ?? null
+            : language === AUTO
+                ? support.autoValue
+                : language;
+
         retranscribe(chosen, {
             onSuccess: () => {
+                const label = languageOptions.find((l) => l.value === chosen)?.label;
                 toast({
                     title: "Re-transcription started",
-                    description:
-                        chosen === null
+                    description: !canOverrideLanguage
+                        ? "Re-running the transcription."
+                        : chosen === null || chosen === AUTO
                             ? "Re-running with automatic language detection."
-                            : `Re-running in ${languageOptions.find((l) => l.value === chosen)?.label ?? chosen}.`,
+                            : `Re-running in ${label ?? chosen}.`,
                 });
                 onClose(false);
             },
@@ -130,27 +182,30 @@ export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage, 
                         <label className="block text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">
                             Language
                         </label>
-                        <Select value={language} onValueChange={setLanguage} disabled={isPending}>
-                            <SelectTrigger className="w-full">
-                                <SelectValue placeholder={isCanary ? "English" : "Auto-detect"} />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-[300px]">
-                                {languageOptions.map((lang) => (
-                                    <SelectItem key={lang.value} value={lang.value}>
-                                        {lang.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <p className="text-xs text-[var(--text-tertiary)]">
-                            {isCanary ? (
-                                <>This recording runs on NVIDIA Canary, which needs an explicit source
-                                language and only supports these four.</>
-                            ) : (
-                                <>Leave on <span className="font-medium">Auto-detect</span> unless the language
-                                was detected incorrectly.</>
-                            )}
-                        </p>
+                        {canOverrideLanguage ? (
+                            <>
+                                <Select value={language} onValueChange={setLanguage} disabled={isPending}>
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder={offersAuto ? "Auto-detect" : languageOptions[0]?.label} />
+                                    </SelectTrigger>
+                                    <SelectContent className="max-h-[300px]">
+                                        {languageOptions.map((lang) => (
+                                            <SelectItem key={lang.value} value={lang.value}>
+                                                {lang.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-[var(--text-tertiary)]">
+                                    {support.note ?? (
+                                        <>Leave on <span className="font-medium">Auto-detect</span> unless the
+                                        language was detected incorrectly.</>
+                                    )}
+                                </p>
+                            </>
+                        ) : (
+                            <p className="text-xs text-[var(--text-tertiary)]">{support.note}</p>
+                        )}
                     </div>
 
                     <div className="flex items-start gap-2 rounded-[var(--radius-card)] border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-[var(--text-secondary)]">

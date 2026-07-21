@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/features/auth/hooks/useAuth";
-import { useExecutionData } from "@/features/transcription/hooks/useAudioDetail";
+import { useAudioDetail, useExecutionData } from "@/features/transcription/hooks/useAudioDetail";
 import { useState } from "react";
 
 export interface SummaryTemplate {
@@ -28,8 +28,9 @@ export function useSummaryTemplates() {
 
 export function useExistingSummary(audioId: string) {
     const { getAuthHeaders } = useAuth();
-    // Completion time of the job's most recent finished run.
+    // Completion time of the job's most recent finished run, plus its live status.
     const { data: executionData } = useExecutionData(audioId);
+    const { data: audioFile } = useAudioDetail(audioId);
 
     const query = useQuery({
         queryKey: ["summary", audioId],
@@ -53,17 +54,28 @@ export function useExistingSummary(audioId: string) {
     // the job fallback — so without this the AI Summary dialog would present the
     // old run's summary as if it described the new transcript.
     //
-    // Deliberately conservative: only hidden when both timestamps are known and
-    // the summary is strictly older than the current run's completion, so a
-    // missing timestamp always errs towards showing the summary.
+    // Deliberately conservative: only hidden when the evidence is unambiguous, so
+    // an unknown status or a missing timestamp errs towards showing the summary.
     const summary = query.data;
     const summaryAt = summary?.updated_at ?? summary?.created_at;
     const runCompletedAt = executionData?.completed_at;
-    const isFromPreviousRun = Boolean(
-        summary?.content &&
+
+    // While a run is queued or in flight the job has no transcript at all — /start
+    // cleared it — yet /execution still reports the PREVIOUS completed run, so the
+    // timestamp comparison alone would judge the old summary current. Anything
+    // other than `completed` therefore means there is nothing for a summary to
+    // describe.
+    const jobStatus = audioFile?.status;
+    const runNotCompleted = jobStatus !== undefined && jobStatus !== "completed";
+
+    const isStaleByTimestamp = Boolean(
         summaryAt &&
         runCompletedAt &&
         new Date(summaryAt).getTime() < new Date(runCompletedAt).getTime()
+    );
+
+    const isFromPreviousRun = Boolean(
+        summary?.content && (runNotCompleted || isStaleByTimestamp)
     );
 
     return {
