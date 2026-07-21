@@ -281,15 +281,26 @@ export function useRetranscribe(audioId: string) {
             return response.json();
         },
         onSuccess: () => {
-            // Only refresh the job record itself: the backend has already set the
-            // job back to `pending`, so this kicks useAudioDetail's poll into gear.
-            // The transcript/summary/execution/logs queries are deliberately NOT
-            // invalidated here — while the job is pending those endpoints return
-            // empty payloads, and caching that would leave the UI stale. They are
-            // refreshed once useAudioDetail observes a new finished run, however
-            // briefly the job was in flight (see useAudioDetail).
+            // Refresh the job record itself: the backend has already set the job
+            // back to `pending`, so this kicks useAudioDetail's poll into gear.
             queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
             queryClient.invalidateQueries({ queryKey: ["audioFiles"] }); // Update list too
+
+            // Drop the previous run's outputs. The backend clears job.Transcript
+            // before enqueueing, so leaving them cached would let the user read,
+            // download or summarise a transcript that no longer exists while the
+            // status already reflects the new run.
+            //
+            // `removeQueries` (not `invalidateQueries`): invalidating would mark
+            // the empty in-flight response as the authoritative cached value with
+            // nothing to supersede it, which is what previously left the UI stale
+            // forever. Removing clears the entry outright; active observers then
+            // show their loading/empty state, and the real results are fetched
+            // when useAudioDetail sees the new finished run.
+            queryClient.removeQueries({ queryKey: ["transcript", audioId] });
+            queryClient.removeQueries({ queryKey: ["summary", audioId] });
+            queryClient.removeQueries({ queryKey: ["executionData", audioId] });
+            queryClient.removeQueries({ queryKey: ["logs", audioId] });
         },
     });
 }
