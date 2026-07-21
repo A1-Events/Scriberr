@@ -54,6 +54,7 @@ export interface AudioFile {
     title?: string;
     status: "uploaded" | "pending" | "processing" | "completed" | "failed";
     created_at: string;
+    updated_at?: string;
     audio_path: string;
     diarization?: boolean;
     is_multi_track?: boolean;
@@ -112,31 +113,49 @@ export function useAudioDetail(audioId: string) {
         },
     });
 
-    // Refresh everything derived from the transcript once the job reaches a
-    // terminal state. These endpoints return empty/`available:false` payloads
-    // while a job is still running, so they must NOT be invalidated at the
+    // Refresh everything derived from the transcript whenever the job produces a
+    // NEW finished result. These endpoints return empty/`available:false`
+    // payloads while a job is running, so they must not be invalidated at the
     // moment work is queued (e.g. on re-transcribe) — that would just cache the
     // empty response and leave it stale until a remount or window refocus.
-    // Keying off the status transition means a re-transcription that finishes
-    // while the user stays on the page refreshes the transcript automatically.
+    //
+    // The trigger is the identity of the finished run (`status` + `updated_at`)
+    // rather than an observed pending -> completed transition, because the page
+    // can miss the interim states entirely: a short re-transcription can finish
+    // between two 3s polls (completed -> completed), and retrying a failed job
+    // that fails again immediately never leaves `failed`. Comparing the run
+    // signature catches those; a stable signature never refires, so there is no
+    // invalidation loop.
     const status = query.data?.status;
-    const previousStatusRef = useRef<AudioFile["status"] | undefined>(undefined);
+    const updatedAt = query.data?.updated_at;
+    const finishedRun =
+        status === "completed" || status === "failed" ? `${status}:${updatedAt ?? ""}` : undefined;
+
+    const lastRefreshedRunRef = useRef<string | undefined>(undefined);
+    const hasSeededRef = useRef(false);
 
     useEffect(() => {
-        const previousStatus = previousStatusRef.current;
-        previousStatusRef.current = status;
-
         if (!audioId || !status) return;
-        // Only on an actual transition — not on first load of an already-finished job.
-        if (previousStatus === undefined || previousStatus === status) return;
-        if (status !== "completed" && status !== "failed") return;
+
+        // The first result we see for this job is whatever the derived queries
+        // already fetched on mount, so record it without refetching. (If the job
+        // is still running on mount this seeds `undefined`, so the run that
+        // finishes later is correctly treated as new.)
+        if (!hasSeededRef.current) {
+            hasSeededRef.current = true;
+            lastRefreshedRunRef.current = finishedRun;
+            return;
+        }
+
+        if (!finishedRun || lastRefreshedRunRef.current === finishedRun) return;
+        lastRefreshedRunRef.current = finishedRun;
 
         queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
         queryClient.invalidateQueries({ queryKey: ["summary", audioId] });
         queryClient.invalidateQueries({ queryKey: ["executionData", audioId] });
         queryClient.invalidateQueries({ queryKey: ["logs", audioId] });
         queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
-    }, [status, audioId, queryClient]);
+    }, [status, finishedRun, audioId, queryClient]);
 
     return query;
 }
@@ -267,8 +286,8 @@ export function useRetranscribe(audioId: string) {
             // The transcript/summary/execution/logs queries are deliberately NOT
             // invalidated here — while the job is pending those endpoints return
             // empty payloads, and caching that would leave the UI stale. They are
-            // refreshed on the status transition to a terminal state instead
-            // (see useAudioDetail).
+            // refreshed once useAudioDetail observes a new finished run, however
+            // briefly the job was in flight (see useAudioDetail).
             queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
             queryClient.invalidateQueries({ queryKey: ["audioFiles"] }); // Update list too
         },
