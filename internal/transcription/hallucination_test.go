@@ -75,3 +75,64 @@ func TestRepetitionLoopGuard(t *testing.T) {
 		t.Fatalf("short run wrongly flagged")
 	}
 }
+
+// TestFilterHallucinationsRomanianSignatures covers the end-of-audio sign-off
+// hallucinations Whisper actually emitted on real Plaud recordings (mostly
+// Romanian meetings) that the original phrase list missed — verified against
+// live transcripts (jobs 5cb8d8d1, 057a5635, 7f393476, 764822c7).
+func TestFilterHallucinationsRomanianSignatures(t *testing.T) {
+	cfg := HallucinationConfig{Enabled: true, MinRepeatRun: 6}
+	res := &interfaces.TranscriptResult{
+		Segments: []interfaces.TranscriptSegment{
+			// Real speech — MUST be kept (precision guards).
+			seg(0, 4, "Pe GRO e subscripție de test."),                      // "subscripție" — a real test subscription
+			seg(4, 8, "Abonamentul anual să nu se mai reînnoiască."),        // "abonamentul" (the subscription), not "abonați"
+			seg(8, 12, "Abonații de pe canalul ăla sunt activi."),           // noun "abonații" (subscribers), not the imperative
+			// End-of-audio sign-off hallucinations — MUST be dropped.
+			seg(12, 16, " MULȚUMIT PENTRU VIZIONARE!"),                       // past-participle "mulțumit" (≠ listed "mulțumesc")
+			seg(16, 20, "Mulțumit por vizionare"),                            // Whisper garbled "pentru" → "por"
+			seg(20, 24, "Nu uitați să vă abonați la canal, să vă mulțumim!"), // "abonați la canal" sentence form
+			seg(24, 28, "Vă doresc să vă abonați la canalul de notificare."), // variable sentence form
+		},
+	}
+
+	removed := filterHallucinations(res, cfg)
+	if removed != 4 {
+		t.Fatalf("expected 4 removed, got %d (kept: %+v)", removed, res.Segments)
+	}
+	if len(res.Segments) != 3 {
+		t.Fatalf("expected 3 kept, got %d: %+v", len(res.Segments), res.Segments)
+	}
+	for i, want := range []string{
+		"Pe GRO e subscripție de test.",
+		"Abonamentul anual să nu se mai reînnoiască.",
+		"Abonații de pe canalul ăla sunt activi.",
+	} {
+		if res.Segments[i].Text != want {
+			t.Fatalf("segment %d: want %q, got %q", i, want, res.Segments[i].Text)
+		}
+	}
+}
+
+func TestMatchesHallucinationSignature(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{
+		{"mulțumit pentru vizionare", true},
+		{"MULȚUMIT PENTRU VIZIONARE!", true},      // case + punctuation
+		{"mulțumit por vizionare", true},          // garbled "pentru"
+		{"va mulțumim pentru vizionare", true},
+		{"nu uitați să vă abonați la canal", true},
+		{"abonați-vă la canalul de notificare", true},
+		// Precision: real speech that must NOT match.
+		{"abonamentul anual", false},              // noun, different word
+		{"abonații de pe canalul de știri", false}, // plural noun "subscribers"
+		{"subscripție de test", false},
+		{"mulțumesc pentru prezentare", false},     // real thanks (not "vizionare")
+	} {
+		if got := matchesHallucinationSignature(normalize(tc.text)); got != tc.want {
+			t.Errorf("normalize(%q)=%q signature=%v want %v", tc.text, normalize(tc.text), got, tc.want)
+		}
+	}
+}
