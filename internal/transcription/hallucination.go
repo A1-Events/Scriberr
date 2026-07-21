@@ -47,6 +47,12 @@ var hallucinationPhrases = normalizeSet([]string{
 	"aboneazate",
 	"multumesc pentru vizionare",
 	"va multumesc pentru vizionare",
+	// Past-participle / "we thank" word-forms Whisper emits as often as the
+	// "mulțumesc" form above; plus the imperative "subscribe to the channel".
+	"multumit pentru vizionare",
+	"va multumim pentru vizionare",
+	"abonati va la canal",
+	"abonati la canal",
 	"ne vedem in urmatorul videoclip",
 	"subtitrarea a fost realizata de comunitatea amaraorg",
 	// Other languages that leak in on mixed audio
@@ -54,6 +60,32 @@ var hallucinationPhrases = normalizeSet([]string{
 	"sous titres realises par la communaute damaraorg",
 	"amaraorg",
 })
+
+// hallucinationSignatures are regexes matched against the NORMALIZED segment
+// text. They catch the end-of-audio YouTube sign-off hallucination in its
+// variable sentence-form and Whisper-garbled variants ("mulțumit POR
+// vizionare", "abonați la canalul de notificare") that a fixed phrase list
+// can't enumerate. Normalized text is already lowercased, ASCII (diacritics
+// folded by diacriticFolder) and punctuation-stripped, so the patterns use
+// plain ASCII. \b around "abonati" makes the imperative "abonați" (subscribe!)
+// match while the noun "abonații" (the subscribers) — real speech — does not.
+var hallucinationSignatures = []*regexp.Regexp{
+	// "...subscribe to [the] channel" (RO: abonați[-vă] la canal[ul ...]).
+	regexp.MustCompile(`\babonati\b.{0,30}canal`),
+	// "...thanks for watching" (RO: mulțumit/mulțumim/mulțumesc pentru/por vizionare).
+	regexp.MustCompile(`(multumit|multumim|multumesc).{0,8}(pentru|por).{0,8}vizionare`),
+}
+
+// matchesHallucinationSignature reports whether the normalized segment text
+// matches any sign-off signature regex.
+func matchesHallucinationSignature(norm string) bool {
+	for _, re := range hallucinationSignatures {
+		if re.MatchString(norm) {
+			return true
+		}
+	}
+	return false
+}
 
 // HallucinationConfig controls the filter. Defaults are conservative.
 type HallucinationConfig struct {
@@ -135,7 +167,7 @@ func filterHallucinations(result *interfaces.TranscriptResult, cfg Hallucination
 	for _, seg := range result.Segments {
 		norm := normalize(seg.Text)
 		_, isPhrase := hallucinationPhrases[norm]
-		if norm != "" && (isPhrase || isRepetitionLoop(norm, cfg.MinRepeatRun)) {
+		if norm != "" && (isPhrase || matchesHallucinationSignature(norm) || isRepetitionLoop(norm, cfg.MinRepeatRun)) {
 			removedSpans = append(removedSpans, [2]float64{seg.Start, seg.End})
 			removed++
 			continue
