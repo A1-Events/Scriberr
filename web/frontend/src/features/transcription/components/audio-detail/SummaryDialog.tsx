@@ -61,7 +61,11 @@ interface SummaryDialogProps {
 export function SummaryDialog({ audioId, isOpen, onClose, llmReady }: SummaryDialogProps) {
     const { toast } = useToast();
     const { data: templates = [], isLoading: templatesLoading } = useSummaryTemplates();
-    const { data: existingSummary, isLoading: summaryLoading } = useExistingSummary(audioId);
+    const {
+        data: existingSummary,
+        isLoading: summaryLoading,
+        isFromPreviousRun: summaryIsFromPreviousRun,
+    } = useExistingSummary(audioId);
     const { data: transcript } = useTranscript(audioId, true);
     const { data: audioFile } = useAudioDetail(audioId);
     const { data: speakerMappings = {} } = useSpeakerMappings(audioId, true);
@@ -244,7 +248,11 @@ export function SummaryDialog({ audioId, isOpen, onClose, llmReady }: SummaryDia
                                 </div>
                             )}
                             {!error && !streamContent && !existingSummary?.content && !isStreaming && (
-                                <p className="text-sm text-[var(--text-tertiary)] italic text-center py-8">No content to display.</p>
+                                <p className="text-sm text-[var(--text-tertiary)] italic text-center py-8">
+                                    {summaryIsFromPreviousRun
+                                        ? "The saved summary was generated from an earlier transcript of this recording. Generate a new one to summarise the current transcript."
+                                        : "No content to display."}
+                                </p>
                             )}
                         </div>
                     </div>

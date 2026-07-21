@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
-import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, Clock, AlertCircle, Users } from "lucide-react";
+import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, Clock, AlertCircle, Users, Languages } from "lucide-react";
 import { Header } from "@/components/Header";
 
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { TranscriptSection } from "./audio-detail/TranscriptSection";
 import { ExecutionInfoDialog } from "./audio-detail/ExecutionInfoDialog";
 import { LogsDialog } from "./audio-detail/LogsDialog";
 import { SummaryDialog } from "./audio-detail/SummaryDialog";
+import { RetranscribeDialog } from "./audio-detail/RetranscribeDialog";
 import { ChatSidePanel } from "./ChatSidePanel";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -55,6 +56,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
     const [logsDialogOpen, setLogsDialogOpen] = useState(false);
     const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+    const [retranscribeOpen, setRetranscribeOpen] = useState(false);
 
     // Data Fetching
     const { data: audioFile, isLoading, error } = useAudioDetail(audioId || "");
@@ -342,6 +344,9 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                         <FileJson className="mr-2 h-4 w-4 opacity-70" /> Download JSON
                                                     </DropdownMenuItem>
                                                     <DropdownMenuSeparator className="bg-[var(--border-subtle)] my-1" />
+                                                    <DropdownMenuItem onClick={() => setRetranscribeOpen(true)} className="rounded-[8px] cursor-pointer">
+                                                        <Languages className="mr-2 h-4 w-4 opacity-70" /> Re-transcribe
+                                                    </DropdownMenuItem>
                                                     <DropdownMenuItem onClick={() => setExecutionDialogOpen(true)} className="rounded-[8px] cursor-pointer">
                                                         <Activity className="mr-2 h-4 w-4 opacity-70" /> Execution Info
                                                     </DropdownMenuItem>
@@ -439,6 +444,13 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                 isOpen={summaryDialogOpen}
                 onClose={setSummaryDialogOpen}
                 llmReady={true}
+            />
+            <RetranscribeDialog
+                audioId={audioId}
+                isOpen={retranscribeOpen}
+                onClose={setRetranscribeOpen}
+                currentLanguage={audioFile.parameters?.language as string | undefined}
+                modelFamily={audioFile.parameters?.model_family as string | undefined}
             />
 
             {/* Mobile / Overlay Chat */}

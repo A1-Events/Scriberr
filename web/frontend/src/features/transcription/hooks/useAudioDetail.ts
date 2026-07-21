@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 
@@ -53,6 +54,7 @@ export interface AudioFile {
     title?: string;
     status: "uploaded" | "pending" | "processing" | "completed" | "failed";
     created_at: string;
+    updated_at?: string;
     audio_path: string;
     diarization?: boolean;
     is_multi_track?: boolean;
@@ -90,8 +92,9 @@ export interface Transcript {
 
 export function useAudioDetail(audioId: string) {
     const { getAuthHeaders } = useAuth();
+    const queryClient = useQueryClient();
 
-    return useQuery({
+    const query = useQuery({
         queryKey: ["audio", audioId],
         queryFn: async () => {
             const response = await fetch(`/api/v1/transcription/${audioId}`, {
@@ -109,6 +112,52 @@ export function useAudioDetail(audioId: string) {
             return false;
         },
     });
+
+    // Refresh everything derived from the transcript whenever the job produces a
+    // NEW finished result. These endpoints return empty/`available:false`
+    // payloads while a job is running, so they must not be invalidated at the
+    // moment work is queued (e.g. on re-transcribe) — that would just cache the
+    // empty response and leave it stale until a remount or window refocus.
+    //
+    // The trigger is the identity of the finished run (`status` + `updated_at`)
+    // rather than an observed pending -> completed transition, because the page
+    // can miss the interim states entirely: a short re-transcription can finish
+    // between two 3s polls (completed -> completed), and retrying a failed job
+    // that fails again immediately never leaves `failed`. Comparing the run
+    // signature catches those; a stable signature never refires, so there is no
+    // invalidation loop.
+    const status = query.data?.status;
+    const updatedAt = query.data?.updated_at;
+    const finishedRun =
+        status === "completed" || status === "failed" ? `${status}:${updatedAt ?? ""}` : undefined;
+
+    const lastRefreshedRunRef = useRef<string | undefined>(undefined);
+    const hasSeededRef = useRef(false);
+
+    useEffect(() => {
+        if (!audioId || !status) return;
+
+        // The first result we see for this job is whatever the derived queries
+        // already fetched on mount, so record it without refetching. (If the job
+        // is still running on mount this seeds `undefined`, so the run that
+        // finishes later is correctly treated as new.)
+        if (!hasSeededRef.current) {
+            hasSeededRef.current = true;
+            lastRefreshedRunRef.current = finishedRun;
+            return;
+        }
+
+        if (!finishedRun || lastRefreshedRunRef.current === finishedRun) return;
+        lastRefreshedRunRef.current = finishedRun;
+
+        queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["summary", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["executionData", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["logs", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
+    }, [status, finishedRun, audioId, queryClient]);
+
+    return query;
 }
 
 export function useTranscript(audioId: string, enabled: boolean) {
@@ -182,6 +231,83 @@ export function useLogs(audioId: string) {
             return response.json() as Promise<LogsData>;
         },
         enabled: !!audioId,
+    });
+}
+
+/**
+ * Re-transcribe an existing recording, optionally overriding the language.
+ *
+ * The backend's POST /transcription/:id/start handler resets its parameters to
+ * CPU/`small` defaults and only applies what the request body sends — it does NOT
+ * merge with the job's stored params. So we must GET the job's current parameters
+ * and resend the FULL params object with only `language` overridden, otherwise the
+ * job silently downgrades off the GPU and to a smaller model.
+ *
+ * `language`: an ISO code (e.g. "ro"), or null to restore WhisperX auto-detect.
+ */
+export function useRetranscribe(audioId: string) {
+    const { getAuthHeaders } = useAuth();
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (language: string | null) => {
+            // Re-fetch the job's current params so we resend them verbatim.
+            const jobResponse = await fetch(`/api/v1/transcription/${audioId}`, {
+                headers: getAuthHeaders(),
+            });
+            if (!jobResponse.ok) {
+                throw new Error("Failed to load current transcription settings");
+            }
+            const job = (await jobResponse.json()) as AudioFile;
+
+            // Full stored params, with only `language` overridden (null = auto-detect).
+            const params = {
+                ...(job.parameters || {}),
+                language,
+            };
+
+            const response = await fetch(`/api/v1/transcription/${audioId}/start`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...getAuthHeaders(),
+                },
+                body: JSON.stringify(params),
+            });
+            if (!response.ok) {
+                const msg = await response.text();
+                throw new Error(msg || "Failed to start re-transcription");
+            }
+            return response.json();
+        },
+        onSuccess: () => {
+            // Refresh the job record itself: the backend has already set the job
+            // back to `pending`, so this kicks useAudioDetail's poll into gear.
+            queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
+            queryClient.invalidateQueries({ queryKey: ["audioFiles"] }); // Update list too
+
+            // Drop the previous run's outputs. The backend clears job.Transcript
+            // before enqueueing, so leaving them cached would let the user read,
+            // download or summarise a transcript that no longer exists while the
+            // status already reflects the new run.
+            //
+            // `resetQueries` specifically:
+            //  - not `invalidateQueries`, which keeps the stale data visible until
+            //    a refetch resolves and then caches the empty in-flight response
+            //    as the authoritative value with nothing to supersede it — the
+            //    stale-forever bug this hook originally had;
+            //  - not `removeQueries`, which does not clear the result held by a
+            //    mounted observer (AudioDetailView keeps `useTranscript(id, true)`
+            //    active and the detail dialogs stay mounted), so the old data
+            //    would stay on screen.
+            // resetQueries clears observed data back to its initial state and
+            // refetches the active ones; the real results land when
+            // useAudioDetail sees the new finished run.
+            queryClient.resetQueries({ queryKey: ["transcript", audioId] });
+            queryClient.resetQueries({ queryKey: ["summary", audioId] });
+            queryClient.resetQueries({ queryKey: ["executionData", audioId] });
+            queryClient.resetQueries({ queryKey: ["logs", audioId] });
+        },
     });
 }
 

@@ -3751,6 +3751,29 @@
                 }
             }
         },
+        "/api/v1/voice-library": {
+            "get": {
+                "responses": {}
+            }
+        },
+        "/api/v1/voice-library/merge": {
+            "post": {
+                "responses": {}
+            }
+        },
+        "/api/v1/voice-library/resweep": {
+            "post": {
+                "responses": {}
+            }
+        },
+        "/api/v1/voice-library/{id}": {
+            "put": {
+                "responses": {}
+            },
+            "delete": {
+                "responses": {}
+            }
+        },
         "/health": {
             "get": {
                 "description": "Check if the API is healthy",
@@ -4279,6 +4302,9 @@
         "api.SpeakerMappingResponse": {
             "type": "object",
             "properties": {
+                "confidence": {
+                    "type": "number"
+                },
                 "custom_name": {
                     "type": "string"
                 },
@@ -4286,6 +4312,9 @@
                     "type": "integer"
                 },
                 "original_speaker": {
+                    "type": "string"
+                },
+                "suggested_name": {
                     "type": "string"
                 }
             }
