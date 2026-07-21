@@ -291,16 +291,22 @@ export function useRetranscribe(audioId: string) {
             // download or summarise a transcript that no longer exists while the
             // status already reflects the new run.
             //
-            // `removeQueries` (not `invalidateQueries`): invalidating would mark
-            // the empty in-flight response as the authoritative cached value with
-            // nothing to supersede it, which is what previously left the UI stale
-            // forever. Removing clears the entry outright; active observers then
-            // show their loading/empty state, and the real results are fetched
-            // when useAudioDetail sees the new finished run.
-            queryClient.removeQueries({ queryKey: ["transcript", audioId] });
-            queryClient.removeQueries({ queryKey: ["summary", audioId] });
-            queryClient.removeQueries({ queryKey: ["executionData", audioId] });
-            queryClient.removeQueries({ queryKey: ["logs", audioId] });
+            // `resetQueries` specifically:
+            //  - not `invalidateQueries`, which keeps the stale data visible until
+            //    a refetch resolves and then caches the empty in-flight response
+            //    as the authoritative value with nothing to supersede it — the
+            //    stale-forever bug this hook originally had;
+            //  - not `removeQueries`, which does not clear the result held by a
+            //    mounted observer (AudioDetailView keeps `useTranscript(id, true)`
+            //    active and the detail dialogs stay mounted), so the old data
+            //    would stay on screen.
+            // resetQueries clears observed data back to its initial state and
+            // refetches the active ones; the real results land when
+            // useAudioDetail sees the new finished run.
+            queryClient.resetQueries({ queryKey: ["transcript", audioId] });
+            queryClient.resetQueries({ queryKey: ["summary", audioId] });
+            queryClient.resetQueries({ queryKey: ["executionData", audioId] });
+            queryClient.resetQueries({ queryKey: ["logs", audioId] });
         },
     });
 }
