@@ -450,6 +450,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                 isOpen={retranscribeOpen}
                 onClose={setRetranscribeOpen}
                 currentLanguage={audioFile.parameters?.language as string | undefined}
+                modelFamily={audioFile.parameters?.model_family as string | undefined}
             />
 
             {/* Mobile / Overlay Chat */}

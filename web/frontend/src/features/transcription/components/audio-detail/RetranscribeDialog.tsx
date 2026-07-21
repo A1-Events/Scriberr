@@ -43,27 +43,53 @@ const LANGUAGES: { value: string; label: string }[] = [
     { value: "ja", label: "Japanese" },
 ];
 
+// NVIDIA Canary only supports these four, and it has no auto-detect: the
+// backend maps `language` to `source_lang` and defaults it to "en" when unset,
+// and CanaryAdapter rejects anything outside this list at processing time.
+// Mirrors CANARY_LANGUAGES in TranscriptionConfigDialog.
+const CANARY_LANGUAGES: { value: string; label: string }[] = [
+    { value: "en", label: "English" },
+    { value: "de", label: "German" },
+    { value: "es", label: "Spanish" },
+    { value: "fr", label: "French" },
+];
+
 interface RetranscribeDialogProps {
     audioId: string;
     isOpen: boolean;
     onClose: (open: boolean) => void;
     /** The language the job currently ran with, if any — used to preselect. */
     currentLanguage?: string;
+    /** Engine the job runs on — decides which languages can be offered. */
+    modelFamily?: string;
 }
 
-export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage }: RetranscribeDialogProps) {
+export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage, modelFamily }: RetranscribeDialogProps) {
     const { toast } = useToast();
     const { mutate: retranscribe, isPending } = useRetranscribe(audioId);
-    const [language, setLanguage] = useState<string>(currentLanguage || AUTO);
+
+    // Canary can neither auto-detect nor handle the full list, so offer only what
+    // the engine actually accepts rather than letting the job fail mid-processing.
+    const isCanary = modelFamily === "nvidia_canary";
+    const languageOptions = isCanary ? CANARY_LANGUAGES : LANGUAGES;
+
+    const defaultLanguage = (() => {
+        if (!isCanary) return currentLanguage || AUTO;
+        // Fall back to English if the stored language is one Canary cannot run.
+        return CANARY_LANGUAGES.some((l) => l.value === currentLanguage) ? (currentLanguage as string) : "en";
+    })();
+
+    const [language, setLanguage] = useState<string>(defaultLanguage);
 
     // Preselect the job's current language whenever the dialog (re)opens.
     useEffect(() => {
         if (isOpen) {
-            setLanguage(currentLanguage || AUTO);
+            setLanguage(defaultLanguage);
         }
-    }, [isOpen, currentLanguage]);
+    }, [isOpen, defaultLanguage]);
 
     const handleRetranscribe = () => {
+        // Canary always needs an explicit source language; never send null.
         const chosen = language === AUTO ? null : language;
         retranscribe(chosen, {
             onSuccess: () => {
@@ -72,7 +98,7 @@ export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage }
                     description:
                         chosen === null
                             ? "Re-running with automatic language detection."
-                            : `Re-running in ${LANGUAGES.find((l) => l.value === chosen)?.label ?? chosen}.`,
+                            : `Re-running in ${languageOptions.find((l) => l.value === chosen)?.label ?? chosen}.`,
                 });
                 onClose(false);
             },
@@ -106,10 +132,10 @@ export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage }
                         </label>
                         <Select value={language} onValueChange={setLanguage} disabled={isPending}>
                             <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Auto-detect" />
+                                <SelectValue placeholder={isCanary ? "English" : "Auto-detect"} />
                             </SelectTrigger>
                             <SelectContent className="max-h-[300px]">
-                                {LANGUAGES.map((lang) => (
+                                {languageOptions.map((lang) => (
                                     <SelectItem key={lang.value} value={lang.value}>
                                         {lang.label}
                                     </SelectItem>
@@ -117,16 +143,21 @@ export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage }
                             </SelectContent>
                         </Select>
                         <p className="text-xs text-[var(--text-tertiary)]">
-                            Leave on <span className="font-medium">Auto-detect</span> unless the language was
-                            detected incorrectly.
+                            {isCanary ? (
+                                <>This recording runs on NVIDIA Canary, which needs an explicit source
+                                language and only supports these four.</>
+                            ) : (
+                                <>Leave on <span className="font-medium">Auto-detect</span> unless the language
+                                was detected incorrectly.</>
+                            )}
                         </p>
                     </div>
 
                     <div className="flex items-start gap-2 rounded-[var(--radius-card)] border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-[var(--text-secondary)]">
                         <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-500 mt-0.5" />
                         <span>
-                            This replaces the current transcript. An existing AI summary is not
-                            regenerated and may still reflect the old transcript.
+                            This replaces the current transcript. Any existing AI summary describes the
+                            old one, so it is hidden until you generate a new summary.
                         </span>
                     </div>
                 </div>

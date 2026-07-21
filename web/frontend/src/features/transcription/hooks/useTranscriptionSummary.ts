@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/features/auth/hooks/useAuth";
+import { useExecutionData } from "@/features/transcription/hooks/useAudioDetail";
 import { useState } from "react";
 
 export interface SummaryTemplate {
@@ -27,17 +28,50 @@ export function useSummaryTemplates() {
 
 export function useExistingSummary(audioId: string) {
     const { getAuthHeaders } = useAuth();
-    return useQuery({
+    // Completion time of the job's most recent finished run.
+    const { data: executionData } = useExecutionData(audioId);
+
+    const query = useQuery({
         queryKey: ["summary", audioId],
         queryFn: async () => {
             const response = await fetch(`/api/v1/transcription/${audioId}/summary`, {
                 headers: getAuthHeaders(),
             });
             if (!response.ok) return null; // No summary exists
-            return response.json() as Promise<{ content: string }>;
+            return response.json() as Promise<{
+                content: string;
+                created_at?: string | null;
+                updated_at?: string | null;
+            }>;
         },
         retry: false,
     });
+
+    // Suppress a summary that was generated from a transcript that no longer
+    // exists. Re-transcribing clears job.Summary but NOT the persisted
+    // models.Summary row, and GetSummaryForTranscription returns that row before
+    // the job fallback — so without this the AI Summary dialog would present the
+    // old run's summary as if it described the new transcript.
+    //
+    // Deliberately conservative: only hidden when both timestamps are known and
+    // the summary is strictly older than the current run's completion, so a
+    // missing timestamp always errs towards showing the summary.
+    const summary = query.data;
+    const summaryAt = summary?.updated_at ?? summary?.created_at;
+    const runCompletedAt = executionData?.completed_at;
+    const isFromPreviousRun = Boolean(
+        summary?.content &&
+        summaryAt &&
+        runCompletedAt &&
+        new Date(summaryAt).getTime() < new Date(runCompletedAt).getTime()
+    );
+
+    return {
+        ...query,
+        data: isFromPreviousRun ? null : summary,
+        /** True when a stored summary was hidden because it predates the current transcript. */
+        isFromPreviousRun,
+    };
 }
 
 export function useSummarizer(audioId: string) {
