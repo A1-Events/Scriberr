@@ -125,7 +125,8 @@ export function RetranscribeDialog({ audioId, isOpen, onClose, currentLanguage }
                     <div className="flex items-start gap-2 rounded-[var(--radius-card)] border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-[var(--text-secondary)]">
                         <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-500 mt-0.5" />
                         <span>
-                            This clears the current transcript and AI summary, then re-processes the audio.
+                            This replaces the current transcript. An existing AI summary is not
+                            regenerated and may still reflect the old transcript.
                         </span>
                     </div>
                 </div>

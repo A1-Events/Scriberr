@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 
@@ -90,8 +91,9 @@ export interface Transcript {
 
 export function useAudioDetail(audioId: string) {
     const { getAuthHeaders } = useAuth();
+    const queryClient = useQueryClient();
 
-    return useQuery({
+    const query = useQuery({
         queryKey: ["audio", audioId],
         queryFn: async () => {
             const response = await fetch(`/api/v1/transcription/${audioId}`, {
@@ -109,6 +111,34 @@ export function useAudioDetail(audioId: string) {
             return false;
         },
     });
+
+    // Refresh everything derived from the transcript once the job reaches a
+    // terminal state. These endpoints return empty/`available:false` payloads
+    // while a job is still running, so they must NOT be invalidated at the
+    // moment work is queued (e.g. on re-transcribe) — that would just cache the
+    // empty response and leave it stale until a remount or window refocus.
+    // Keying off the status transition means a re-transcription that finishes
+    // while the user stays on the page refreshes the transcript automatically.
+    const status = query.data?.status;
+    const previousStatusRef = useRef<AudioFile["status"] | undefined>(undefined);
+
+    useEffect(() => {
+        const previousStatus = previousStatusRef.current;
+        previousStatusRef.current = status;
+
+        if (!audioId || !status) return;
+        // Only on an actual transition — not on first load of an already-finished job.
+        if (previousStatus === undefined || previousStatus === status) return;
+        if (status !== "completed" && status !== "failed") return;
+
+        queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["summary", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["executionData", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["logs", audioId] });
+        queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
+    }, [status, audioId, queryClient]);
+
+    return query;
 }
 
 export function useTranscript(audioId: string, enabled: boolean) {
@@ -232,13 +262,14 @@ export function useRetranscribe(audioId: string) {
             return response.json();
         },
         onSuccess: () => {
-            // Job is now pending → useAudioDetail's poll picks up live status/progress.
-            // Clear stale results so the UI refreshes once the new run completes.
+            // Only refresh the job record itself: the backend has already set the
+            // job back to `pending`, so this kicks useAudioDetail's poll into gear.
+            // The transcript/summary/execution/logs queries are deliberately NOT
+            // invalidated here — while the job is pending those endpoints return
+            // empty payloads, and caching that would leave the UI stale. They are
+            // refreshed on the status transition to a terminal state instead
+            // (see useAudioDetail).
             queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
-            queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
-            queryClient.invalidateQueries({ queryKey: ["executionData", audioId] });
-            queryClient.invalidateQueries({ queryKey: ["logs", audioId] });
-            queryClient.invalidateQueries({ queryKey: ["summary", audioId] });
             queryClient.invalidateQueries({ queryKey: ["audioFiles"] }); // Update list too
         },
     });
