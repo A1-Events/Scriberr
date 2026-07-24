@@ -352,7 +352,15 @@ const TaxonomySettings: React.FC = () => {
               >
                 <option value="">Leave them with no project</option>
                 {tags
-                  .filter((t) => t.id !== deleting.tag.id)
+                  // Only offer projects the affected recordings could legitimately
+                  // carry: same company, or global. Offering another company's
+                  // project would move them into a combination the recording UI
+                  // and the classifier both treat as invalid.
+                  .filter(
+                    (t) =>
+                      t.id !== deleting.tag.id &&
+                      (t.company_id === null || t.company_id === deleting.tag.company_id),
+                  )
                   .map((t) => (
                     <option key={t.id} value={t.id}>
                       Move to “{t.name}”

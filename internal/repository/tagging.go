@@ -33,6 +33,9 @@ type TaggingRepository interface {
 	// SetLabels replaces a job's company and tags in one transaction.
 	SetLabels(ctx context.Context, jobID string, companyID *uint, tagIDs []uint, source string, confidence *float64) error
 	LabelsForJob(ctx context.Context, jobID string) (*uint, []models.JobTag, error)
+	// IsManuallyLabelled reports whether a human has set this job's labels, so
+	// automatic passes can leave curated recordings alone.
+	IsManuallyLabelled(ctx context.Context, jobID string) (bool, error)
 	// CorrectedExamples returns the most recent manual assignments, newest
 	// first — the few-shot material for the classifier.
 	CorrectedExamples(ctx context.Context, limit int) ([]CorrectedExample, error)
@@ -104,6 +107,23 @@ func (r *taggingRepository) DeleteTag(ctx context.Context, id uint, reassignTo *
 	if reassignTo != nil && *reassignTo == id {
 		return fmt.Errorf("cannot reassign a tag to itself")
 	}
+	if reassignTo != nil {
+		// The replacement must be one the affected recordings could legitimately
+		// carry — same company, or global. Otherwise they end up with a project
+		// that belongs to a different company, which the recording UI and the
+		// classifier both treat as invalid. The UI filters this too; enforce it
+		// here so the API cannot be used to create the bad state.
+		var from, to models.Tag
+		if err := r.db.WithContext(ctx).First(&from, id).Error; err != nil {
+			return err
+		}
+		if err := r.db.WithContext(ctx).First(&to, *reassignTo).Error; err != nil {
+			return err
+		}
+		if to.CompanyID != nil && (from.CompanyID == nil || *to.CompanyID != *from.CompanyID) {
+			return fmt.Errorf("cannot reassign to a project scoped to a different company")
+		}
+	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if reassignTo != nil {
 			// Move the affected recordings onto the replacement. Skip any that
@@ -173,6 +193,23 @@ func (r *taggingRepository) LabelsForJob(ctx context.Context, jobID string) (*ui
 		return nil, nil, err
 	}
 	return job.CompanyID, links, nil
+}
+
+func (r *taggingRepository) IsManuallyLabelled(ctx context.Context, jobID string) (bool, error) {
+	var job models.TranscriptionJob
+	if err := r.db.WithContext(ctx).Select("company_source").Where("id = ?", jobID).First(&job).Error; err != nil {
+		return false, err
+	}
+	if job.CompanySource != nil && *job.CompanySource == models.SourceManual {
+		return true, nil
+	}
+	var n int64
+	if err := r.db.WithContext(ctx).Model(&models.JobTag{}).
+		Where("transcription_job_id = ? AND source = ?", jobID, models.SourceManual).
+		Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *taggingRepository) CorrectedExamples(ctx context.Context, limit int) ([]CorrectedExample, error) {

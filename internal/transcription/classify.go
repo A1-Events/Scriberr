@@ -53,6 +53,17 @@ func (u *UnifiedTranscriptionService) classifyJob(ctx context.Context, jobID str
 	if u.taggingRepo == nil || !classificationEnabled() || strings.TrimSpace(transcript) == "" {
 		return
 	}
+	// Never clobber a human's labels. The same job is re-classified whenever it
+	// is re-transcribed (the start endpoint is reused for re-runs), so without
+	// this a recording the user had corrected would silently revert to a machine
+	// guess — losing both the curation and the example the classifier learns
+	// from. A correction is final until the user changes it again.
+	if manual, err := u.taggingRepo.IsManuallyLabelled(ctx, jobID); err != nil || manual {
+		if manual {
+			logger.Info("Classification skipped — labels were set by hand", "job_id", jobID)
+		}
+		return
+	}
 	svc, model := u.llmServiceForCorrection(ctx)
 	if svc == nil {
 		logger.Info("Classification enabled but no usable LLM config/model — skipping")
