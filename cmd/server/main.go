@@ -109,6 +109,7 @@ func main() {
 	speakerMappingRepo := repository.NewSpeakerMappingRepository(database.DB)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(database.DB)
 	voiceLibraryRepo := repository.NewVoiceLibraryRepository(database.DB)
+	taggingRepo := repository.NewTaggingRepository(database.DB)
 
 	// Initialize services
 	logger.Startup("service", "Initializing services")
@@ -121,6 +122,7 @@ func main() {
 	unifiedProcessor.GetUnifiedService().SetBroadcaster(broadcaster)
 	unifiedProcessor.GetUnifiedService().SetVoiceLibrary(voiceLibraryRepo)
 	unifiedProcessor.GetUnifiedService().SetLLMConfig(llmConfigRepo)
+	unifiedProcessor.GetUnifiedService().SetTagging(taggingRepo)
 
 	// Bootstrap embedded Python environment (for all adapters)
 	logger.Startup("python", "Preparing Python environment")
@@ -169,6 +171,7 @@ func main() {
 		broadcaster,
 	)
 	handler.SetVoiceLibrary(voiceLibraryRepo)
+	handler.SetTagging(taggingRepo)
 
 	// Set up router
 	router := api.SetupRoutes(handler, authService)

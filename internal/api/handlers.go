@@ -48,6 +48,7 @@ type Handler struct {
 	speakerMappingRepo  repository.SpeakerMappingRepository
 	refreshTokenRepo    repository.RefreshTokenRepository
 	voiceLibraryRepo    repository.VoiceLibraryRepository // optional; nil disables voice library
+	taggingRepo         repository.TaggingRepository      // optional; nil disables company/project tagging
 	taskQueue           *queue.TaskQueue
 	unifiedProcessor    *transcription.UnifiedJobProcessor
 	quickTranscription  *transcription.QuickTranscriptionService
@@ -58,6 +59,11 @@ type Handler struct {
 // SetVoiceLibrary enables the voice library endpoints and rename-learning.
 func (h *Handler) SetVoiceLibrary(repo repository.VoiceLibraryRepository) {
 	h.voiceLibraryRepo = repo
+}
+
+// SetTagging enables the company/project endpoints.
+func (h *Handler) SetTagging(repo repository.TaggingRepository) {
+	h.taggingRepo = repo
 }
 
 // NewHandler creates a new handler
