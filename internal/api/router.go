@@ -191,6 +191,7 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			tags.PUT("/:id", handler.UpdateTag)
 			tags.GET("/:id/usage", handler.GetTagUsage)
 			tags.DELETE("/:id", handler.DeleteTag)
+			tags.POST("/backfill", handler.BackfillClassification)
 		}
 
 		// Profile routes (require authentication)

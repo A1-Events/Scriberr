@@ -276,3 +276,26 @@ func parseUintParam(c *gin.Context, name string) (uint, error) {
 	}
 	return uint(v), nil
 }
+
+// BackfillClassification godoc
+// @Summary Classify finished recordings that have no company yet
+// @Description Uses each recording's STORED transcript, so nothing is re-transcribed. Labels are written as machine guesses (source=auto), never as human corrections.
+// @Tags tagging
+// @Router /api/v1/tags/backfill [post]
+func (h *Handler) BackfillClassification(c *gin.Context) {
+	if !h.taggingReady(c) {
+		return
+	}
+	limit := 0
+	if raw := c.Query("limit"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			limit = v
+		}
+	}
+	classified, skipped, err := h.unifiedProcessor.GetUnifiedService().ClassifyExisting(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"classified": classified, "skipped": skipped})
+}
