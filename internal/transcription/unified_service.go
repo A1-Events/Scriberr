@@ -55,6 +55,7 @@ type UnifiedTranscriptionService struct {
 	broadcaster           *sse.Broadcaster
 	voiceLibrary          repository.VoiceLibraryRepository // optional; nil disables the voice library
 	llmConfigRepo         repository.LLMConfigRepository    // optional; enables glossary hotwords + LLM correction
+	taggingRepo           repository.TaggingRepository      // optional; enables company/project auto-classification
 }
 
 // SetVoiceLibrary enables cross-recording speaker matching (voice library).
@@ -65,6 +66,11 @@ func (u *UnifiedTranscriptionService) SetVoiceLibrary(repo repository.VoiceLibra
 // SetLLMConfig enables the domain-glossary features (hotwords + LLM correction).
 func (u *UnifiedTranscriptionService) SetLLMConfig(repo repository.LLMConfigRepository) {
 	u.llmConfigRepo = repo
+}
+
+// SetTagging enables company/project auto-classification of finished jobs.
+func (u *UnifiedTranscriptionService) SetTagging(repo repository.TaggingRepository) {
+	u.taggingRepo = repo
 }
 
 // glossaryTerms returns the dynamic glossary terms (voice-library speaker
@@ -438,7 +444,29 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		}
 	}
 
+	// File the recording under a company + project tags (opt-in via
+	// AUTO_CLASSIFY=on). Runs last, on the corrected text, and never fails the
+	// job — an unlabelled recording is fine, a mislabelled one is not.
+	if transcriptResult != nil {
+		u.classifyJob(ctx, job.ID, transcriptResult.Text, speakerNames(transcriptResult))
+	}
+
 	return nil
+}
+
+// speakerNames lists the distinct speaker labels on a result, used as a
+// classification signal (who was in the room predicts the company well).
+func speakerNames(result *interfaces.TranscriptResult) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, seg := range result.Segments {
+		if seg.Speaker == nil || *seg.Speaker == "" || seen[*seg.Speaker] {
+			continue
+		}
+		seen[*seg.Speaker] = true
+		out = append(out, *seg.Speaker)
+	}
+	return out
 }
 
 // processMultiTrackJob handles multi-track audio processing

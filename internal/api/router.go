@@ -153,6 +153,10 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			transcription.GET("/:id/speakers", handler.GetSpeakerMappings)
 			transcription.POST("/:id/speakers", handler.UpdateSpeakerMappings)
 
+			// Company/project labels for a transcription
+			transcription.GET("/:id/labels", handler.GetTranscriptionLabels)
+			transcription.PUT("/:id/labels", handler.UpdateTranscriptionLabels)
+
 			// Quick transcription endpoints
 			transcription.POST("/quick", handler.SubmitQuickTranscription)
 			transcription.GET("/quick/:id", handler.GetQuickTranscriptionStatus)
@@ -167,6 +171,26 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			voiceLibrary.DELETE("/:id", handler.DeleteVoiceLibrarySpeaker)
 			voiceLibrary.POST("/merge", handler.MergeVoiceLibrarySpeakers)
 			voiceLibrary.POST("/resweep", handler.ResweepVoiceLibrary)
+		}
+
+		// Company/project taxonomy routes (require authentication)
+		companies := v1.Group("/companies")
+		companies.Use(middleware.AuthMiddleware(authService))
+		{
+			companies.GET("", handler.ListCompanies)
+			companies.POST("", handler.CreateCompany)
+			companies.PUT("/:id", handler.UpdateCompany)
+			companies.DELETE("/:id", handler.DeleteCompany)
+		}
+
+		tags := v1.Group("/tags")
+		tags.Use(middleware.AuthMiddleware(authService))
+		{
+			tags.GET("", handler.ListTags)
+			tags.POST("", handler.CreateTag)
+			tags.PUT("/:id", handler.UpdateTag)
+			tags.GET("/:id/usage", handler.GetTagUsage)
+			tags.DELETE("/:id", handler.DeleteTag)
 		}
 
 		// Profile routes (require authentication)

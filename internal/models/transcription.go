@@ -31,8 +31,17 @@ type TranscriptionJob struct {
 	// WhisperX parameters
 	Parameters WhisperXParams `json:"parameters" gorm:"embedded"`
 
+	// Grouping: exactly one company (nullable = not yet classified). Projects
+	// are many and live in JobTag. CompanySource distinguishes an LLM guess
+	// from a user correction — see models/tagging.go.
+	CompanyID         *uint    `json:"company_id,omitempty" gorm:"index"`
+	CompanySource     *string  `json:"company_source,omitempty" gorm:"type:varchar(10)"`
+	CompanyConfidence *float64 `json:"company_confidence,omitempty"`
+
 	// Relationships
 	MultiTrackFiles []MultiTrackFile `json:"multi_track_files,omitempty" gorm:"foreignKey:TranscriptionJobID"`
+	Company         *Company         `json:"company,omitempty" gorm:"foreignKey:CompanyID;constraint:OnDelete:SET NULL"`
+	Tags            []JobTag         `json:"tags,omitempty" gorm:"foreignKey:TranscriptionJobID"`
 }
 
 // JobStatus represents the status of a transcription job
