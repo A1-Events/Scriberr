@@ -228,6 +228,10 @@ func extractJSONObject(s string) string {
 // storedTranscript is the shape saved in TranscriptionJob.Transcript: WhisperX
 // JSON with a segments array. Older rows may be a bare array.
 type storedTranscript struct {
+	// Some adapters (Parakeet/Canary with timestamps disabled) save the whole
+	// transcript in Text and leave Segments empty, so Text is the fallback —
+	// without it those recordings look empty and can never be backfilled.
+	Text     string `json:"text"`
 	Segments []struct {
 		Text    string  `json:"text"`
 		Speaker *string `json:"speaker"`
@@ -270,7 +274,12 @@ func flattenStored(raw string) (string, []string) {
 			speakers = append(speakers, *s.Speaker)
 		}
 	}
-	return strings.TrimSpace(b.String()), speakers
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		// No usable segments — fall back to the top-level text.
+		out = strings.TrimSpace(st.Text)
+	}
+	return out, speakers
 }
 
 // ClassifyExisting labels finished recordings that have no company yet, using
@@ -288,9 +297,12 @@ func (u *UnifiedTranscriptionService) ClassifyExisting(ctx context.Context, limi
 	if err != nil {
 		return 0, 0, err
 	}
-	classified, skipped := 0, 0
+	classified, skipped, attempted := 0, 0, 0
 	for _, job := range jobs {
-		if limit > 0 && classified >= limit {
+		// Bound on ATTEMPTS, not successes: a job whose classification fails
+		// still costs an LLM call, so counting only successes would let
+		// limit=1 quietly send the entire library to the model.
+		if limit > 0 && attempted >= limit {
 			break
 		}
 		if job.CompanyID != nil || job.Transcript == nil {
@@ -302,6 +314,7 @@ func (u *UnifiedTranscriptionService) ClassifyExisting(ctx context.Context, limi
 			skipped++
 			continue
 		}
+		attempted++
 		u.classifyJob(ctx, job.ID, text, speakers)
 		// classifyJob is fail-safe and stays silent on error, so re-read to see
 		// whether it took. Jobs that already had a company were skipped above,
