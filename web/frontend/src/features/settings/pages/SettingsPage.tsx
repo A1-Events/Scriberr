@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { User, Settings as SettingsIcon, Key, Bot, FileText, Plus, Terminal, Users } from "lucide-react";
+import { User, Settings as SettingsIcon, Key, Bot, FileText, Plus, Terminal, Users, Building2 } from "lucide-react";
 import {
   Tabs,
   TabsContent,
@@ -18,6 +18,7 @@ import { SummaryTemplateDialog, type SummaryTemplate } from "../components/Summa
 import { SummaryTemplatesTable } from "../components/SummaryTemplatesTable";
 import { CLISettingsTab } from "../components/CLISettingsTab";
 import VoiceLibrarySettings from "../components/VoiceLibrarySettings";
+import TaxonomySettings from "../components/TaxonomySettings";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 
 export function Settings() {
@@ -126,6 +127,14 @@ export function Settings() {
               <Users className="h-4 w-4" />
               <span className="hidden sm:inline">Voices</span>
             </TabsTrigger>
+            <TabsTrigger
+              value="taxonomy"
+              aria-label="Companies and projects"
+              className="flex items-center justify-center gap-2 h-9 py-1.5 data-[state=active]:bg-[var(--bg-card)] data-[state=active]:shadow-sm data-[state=active]:text-[var(--text-primary)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] font-medium rounded-lg text-xs sm:text-sm transition-all"
+            >
+              <Building2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Companies</span>
+            </TabsTrigger>
           </TabsList>
 
           {/* Transcription Tab */}
@@ -136,6 +145,11 @@ export function Settings() {
           {/* Voice Library Tab */}
           <TabsContent value="voices" className="space-y-6">
             <VoiceLibrarySettings />
+          </TabsContent>
+
+          {/* Companies & Projects Tab */}
+          <TabsContent value="taxonomy" className="space-y-6">
+            <TaxonomySettings />
           </TabsContent>
 
           {/* Account Tab */}

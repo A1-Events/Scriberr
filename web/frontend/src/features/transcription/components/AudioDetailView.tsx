@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 // Custom Hooks
 import { useAudioDetail, useUpdateTitle, useTranscript, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
 import { useSpeakerMappings } from "@/features/transcription/hooks/useTranscriptionSpeakers";
+import RecordingLabels from "@/features/transcription/components/RecordingLabels";
 import { useTranscriptDownload } from "@/features/transcription/hooks/useTranscriptDownload";
 
 // Sub-components
@@ -216,6 +217,13 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                         {audioFile.title || "Untitled Recording"}
                                                     </h1>
                                                     <Edit2 className="h-4 w-4 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                            )}
+
+                                            {/* Company / project labels */}
+                                            {audioId && (
+                                                <div className="mt-1">
+                                                    <RecordingLabels jobId={audioId} />
                                                 </div>
                                             )}
 
