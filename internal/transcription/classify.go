@@ -213,3 +213,94 @@ func extractJSONObject(s string) string {
 	}
 	return s
 }
+
+// storedTranscript is the shape saved in TranscriptionJob.Transcript: WhisperX
+// JSON with a segments array. Older rows may be a bare array.
+type storedTranscript struct {
+	Segments []struct {
+		Text    string  `json:"text"`
+		Speaker *string `json:"speaker"`
+	} `json:"segments"`
+}
+
+// flattenStored pulls plain text and the distinct speaker labels out of a
+// stored transcript, so an already-finished recording can be classified without
+// re-running transcription.
+func flattenStored(raw string) (string, []string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if raw[0] != '[' && raw[0] != '{' {
+		return raw, nil // plain text row
+	}
+	var st storedTranscript
+	segs := st.Segments
+	if raw[0] == '{' {
+		if err := json.Unmarshal([]byte(raw), &st); err != nil {
+			return "", nil
+		}
+		segs = st.Segments
+	} else {
+		if err := json.Unmarshal([]byte(raw), &segs); err != nil {
+			return "", nil
+		}
+	}
+	var b strings.Builder
+	seen := map[string]bool{}
+	var speakers []string
+	for i, s := range segs {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(strings.TrimSpace(s.Text))
+		if s.Speaker != nil && *s.Speaker != "" && !seen[*s.Speaker] {
+			seen[*s.Speaker] = true
+			speakers = append(speakers, *s.Speaker)
+		}
+	}
+	return strings.TrimSpace(b.String()), speakers
+}
+
+// ClassifyExisting labels finished recordings that have no company yet, using
+// their stored transcript. Needed because the classifier normally runs only at
+// the end of a transcription — without this, labelling a pre-existing library
+// would mean re-transcribing everything.
+//
+// Writes Source=auto, exactly like the inline pass: these are machine guesses,
+// and must NOT be mistaken for the human corrections the classifier learns from.
+func (u *UnifiedTranscriptionService) ClassifyExisting(ctx context.Context, limit int) (int, int, error) {
+	if u.taggingRepo == nil {
+		return 0, 0, fmt.Errorf("tagging is not enabled")
+	}
+	jobs, err := u.jobRepo.FindByStatus(ctx, models.StatusCompleted)
+	if err != nil {
+		return 0, 0, err
+	}
+	classified, skipped := 0, 0
+	for _, job := range jobs {
+		if limit > 0 && classified >= limit {
+			break
+		}
+		if job.CompanyID != nil || job.Transcript == nil {
+			skipped++
+			continue
+		}
+		text, speakers := flattenStored(*job.Transcript)
+		if strings.TrimSpace(text) == "" {
+			skipped++
+			continue
+		}
+		u.classifyJob(ctx, job.ID, text, speakers)
+		// classifyJob is fail-safe and stays silent on error, so re-read to see
+		// whether it took. Jobs that already had a company were skipped above,
+		// so a company here means this pass set it.
+		if cid, _, err := u.taggingRepo.LabelsForJob(ctx, job.ID); err == nil && cid != nil {
+			classified++
+		} else {
+			skipped++
+		}
+	}
+	logger.Info("Backfill classification finished", "classified", classified, "skipped", skipped)
+	return classified, skipped, nil
+}
