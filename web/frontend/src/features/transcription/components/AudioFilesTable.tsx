@@ -777,39 +777,43 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 					onChange={(value) => setGlobalFilter(String(value))}
 					className="w-full lg:w-80 shadow-sm border-transparent focus:border-[var(--brand-solid)] bg-white dark:bg-zinc-900"
 				/>
-				{companies.length > 0 && (
+				{(companies.length > 0 || projectTags.length > 0) && (
 					<div className="flex flex-col sm:flex-row gap-2">
-						<select
-							aria-label="Filter by company"
-							className="h-10 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 text-sm"
-							value={companyFilter ?? ""}
-							onChange={(event) => {
-								const next = event.target.value ? Number(event.target.value) : null;
-								setCompanyFilter(next);
-								setTagFilter((current) => {
-									const selected = projectTags.find((tag) => tag.id === current);
-									return selected && next !== null && selected.company_id !== null && selected.company_id !== next
-										? null
-										: current;
-								});
-							}}
-						>
-							<option value="">All companies</option>
-							{companies.map((company) => (
-								<option key={company.id} value={company.id}>{company.name}</option>
-							))}
-						</select>
-						<select
-							aria-label="Filter by project"
-							className="h-10 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 text-sm"
-							value={tagFilter ?? ""}
-							onChange={(event) => setTagFilter(event.target.value ? Number(event.target.value) : null)}
-						>
-							<option value="">All projects</option>
-							{selectableProjectTags.map((tag) => (
-								<option key={tag.id} value={tag.id}>{tag.name}</option>
-							))}
-						</select>
+						{companies.length > 0 && (
+							<select
+								aria-label="Filter by company"
+								className="h-10 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 text-sm"
+								value={companyFilter ?? ""}
+								onChange={(event) => {
+									const next = event.target.value ? Number(event.target.value) : null;
+									setCompanyFilter(next);
+									setTagFilter((current) => {
+										const selected = projectTags.find((tag) => tag.id === current);
+										return selected && next !== null && selected.company_id !== null && selected.company_id !== next
+											? null
+											: current;
+									});
+								}}
+							>
+								<option value="">All companies</option>
+								{companies.map((company) => (
+									<option key={company.id} value={company.id}>{company.name}</option>
+								))}
+							</select>
+						)}
+						{projectTags.length > 0 && (
+							<select
+								aria-label="Filter by project"
+								className="h-10 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 text-sm"
+								value={tagFilter ?? ""}
+								onChange={(event) => setTagFilter(event.target.value ? Number(event.target.value) : null)}
+							>
+								<option value="">All projects</option>
+								{selectableProjectTags.map((tag) => (
+									<option key={tag.id} value={tag.id}>{tag.name}</option>
+								))}
+							</select>
+						)}
 					</div>
 				)}
 			</div>

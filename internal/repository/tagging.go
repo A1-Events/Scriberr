@@ -104,7 +104,7 @@ func (r *taggingRepository) UpdateTag(ctx context.Context, id uint, name string,
 			var incompatible int64
 			if err := tx.Table("job_tags").
 				Joins("JOIN transcription_jobs ON transcription_jobs.id = job_tags.transcription_job_id").
-				Where("job_tags.tag_id = ? AND (transcription_jobs.company_id IS NULL OR transcription_jobs.company_id <> ?)", id, *companyID).
+				Where("job_tags.tag_id = ? AND transcription_jobs.deleted_at IS NULL AND (transcription_jobs.company_id IS NULL OR transcription_jobs.company_id <> ?)", id, *companyID).
 				Count(&incompatible).Error; err != nil {
 				return err
 			}

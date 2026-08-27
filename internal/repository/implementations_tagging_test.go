@@ -134,6 +134,31 @@ func TestDeleteTagReassignmentPreservesManualProvenance(t *testing.T) {
 	require.Equal(t, models.SourceManual, links[0].Source)
 }
 
+func TestUpdateTagIgnoresSoftDeletedRecordingsWhenScoping(t *testing.T) {
+	db := newTaggingTestDB(t)
+	companyA := models.Company{Key: "A", Name: "Company A"}
+	companyB := models.Company{Key: "B", Name: "Company B"}
+	require.NoError(t, db.Create(&companyA).Error)
+	require.NoError(t, db.Create(&companyB).Error)
+	project := models.Tag{Key: "PROJECT", Name: "Project"}
+	require.NoError(t, db.Create(&project).Error)
+	deletedJob := models.TranscriptionJob{
+		ID: "deleted-job", AudioPath: "/audio/deleted.mp3", CompanyID: &companyB.ID,
+	}
+	require.NoError(t, db.Create(&deletedJob).Error)
+	require.NoError(t, db.Create(&models.JobTag{
+		TranscriptionJobID: deletedJob.ID, TagID: project.ID, Source: models.SourceManual,
+	}).Error)
+	require.NoError(t, db.Delete(&deletedJob).Error)
+
+	repo := NewTaggingRepository(db)
+	require.NoError(t, repo.UpdateTag(context.Background(), project.ID, project.Name, &companyA.ID))
+
+	var updated models.Tag
+	require.NoError(t, db.First(&updated, project.ID).Error)
+	require.Equal(t, companyA.ID, *updated.CompanyID)
+}
+
 func newTaggingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
