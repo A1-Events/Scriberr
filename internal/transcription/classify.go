@@ -301,6 +301,9 @@ func (u *UnifiedTranscriptionService) ClassifyExisting(ctx context.Context, limi
 	if !classificationEnabled() {
 		return 0, 0, fmt.Errorf("automatic classification is disabled (set AUTO_CLASSIFY=on)")
 	}
+	if svc, model := u.llmServiceForCorrection(ctx); svc == nil || model == "" {
+		return 0, 0, fmt.Errorf("automatic classification needs an active LLM provider and TRANSCRIPT_CORRECTION_MODEL")
+	}
 	jobs, err := u.jobRepo.FindByStatus(ctx, models.StatusCompleted)
 	if err != nil {
 		return 0, 0, err
