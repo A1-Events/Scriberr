@@ -234,12 +234,12 @@ func (h *Handler) GetTranscriptionLabels(c *gin.Context) {
 		return
 	}
 	jobID := c.Param("id")
-	companyID, links, err := h.taggingRepo.LabelsForJob(c.Request.Context(), jobID)
+	companyID, companySource, links, err := h.taggingRepo.LabelsForJob(c.Request.Context(), jobID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"company_id": companyID, "tags": links})
+	c.JSON(http.StatusOK, gin.H{"company_id": companyID, "company_source": companySource, "tags": links})
 }
 
 // UpdateTranscriptionLabels godoc
@@ -286,11 +286,17 @@ func (h *Handler) BackfillClassification(c *gin.Context) {
 	if !h.taggingReady(c) {
 		return
 	}
+	// Fail fast on a malformed or negative limit. Silently treating "10x" or
+	// "-1" as "no cap" would turn a typo in the throttle into paid inference
+	// across the whole library.
 	limit := 0
 	if raw := c.Query("limit"); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil {
-			limit = v
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer"})
+			return
 		}
+		limit = v
 	}
 	classified, skipped, err := h.unifiedProcessor.GetUnifiedService().ClassifyExisting(c.Request.Context(), limit)
 	if err != nil {

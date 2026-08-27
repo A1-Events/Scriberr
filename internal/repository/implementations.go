@@ -53,7 +53,7 @@ type JobRepository interface {
 	FindWithAssociations(ctx context.Context, id string) (*models.TranscriptionJob, error)
 	FindActiveTrackJobs(ctx context.Context, parentJobID string) ([]models.TranscriptionJob, error)
 	FindLatestCompletedExecution(ctx context.Context, jobID string) (*models.TranscriptionJobExecution, error)
-	ListWithParams(ctx context.Context, offset, limit int, sortBy, sortOrder, searchQuery string, updatedAfter *time.Time) ([]models.TranscriptionJob, int64, error)
+	ListWithParams(ctx context.Context, offset, limit int, sortBy, sortOrder, searchQuery string, updatedAfter *time.Time, filters JobListFilters) ([]models.TranscriptionJob, int64, error)
 	ListByUser(ctx context.Context, userID uint, offset, limit int) ([]models.TranscriptionJob, int64, error)
 	UpdateTranscript(ctx context.Context, jobID string, transcript string) error
 	CreateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error
@@ -63,8 +63,16 @@ type JobRepository interface {
 	UpdateStatus(ctx context.Context, jobID string, status models.JobStatus) error
 	UpdateError(ctx context.Context, jobID string, errorMsg string) error
 	FindByStatus(ctx context.Context, status models.JobStatus) ([]models.TranscriptionJob, error)
+	MarkClassificationAttempted(ctx context.Context, jobID string) error
 	CountByStatus(ctx context.Context, status models.JobStatus) (int64, error)
 	UpdateSummary(ctx context.Context, jobID string, summary string) error
+}
+
+// JobListFilters scopes the recording library without changing its search or
+// pagination semantics. Nil fields mean "all".
+type JobListFilters struct {
+	CompanyID *uint
+	TagID     *uint
 }
 
 type jobRepository struct {
@@ -81,6 +89,8 @@ func (r *jobRepository) FindWithAssociations(ctx context.Context, id string) (*m
 	var job models.TranscriptionJob
 	err := r.db.WithContext(ctx).
 		Preload("MultiTrackFiles").
+		Preload("Company").
+		Preload("Tags.Tag").
 		Where("id = ?", id).
 		First(&job).Error
 	if err != nil {
@@ -89,7 +99,7 @@ func (r *jobRepository) FindWithAssociations(ctx context.Context, id string) (*m
 	return &job, nil
 }
 
-func (r *jobRepository) ListWithParams(ctx context.Context, offset, limit int, sortBy, sortOrder, searchQuery string, updatedAfter *time.Time) ([]models.TranscriptionJob, int64, error) {
+func (r *jobRepository) ListWithParams(ctx context.Context, offset, limit int, sortBy, sortOrder, searchQuery string, updatedAfter *time.Time, filters JobListFilters) ([]models.TranscriptionJob, int64, error) {
 	var jobs []models.TranscriptionJob
 	var count int64
 
@@ -104,6 +114,16 @@ func (r *jobRepository) ListWithParams(ctx context.Context, offset, limit int, s
 	if searchQuery != "" {
 		search := "%" + searchQuery + "%"
 		db = db.Where("title LIKE ? OR audio_path LIKE ?", search, search)
+	}
+
+	if filters.CompanyID != nil {
+		db = db.Where("company_id = ?", *filters.CompanyID)
+	}
+	if filters.TagID != nil {
+		db = db.Where(
+			"EXISTS (SELECT 1 FROM job_tags WHERE job_tags.transcription_job_id = transcription_jobs.id AND job_tags.tag_id = ?)",
+			*filters.TagID,
+		)
 	}
 
 	// Count total matching records
@@ -123,7 +143,7 @@ func (r *jobRepository) ListWithParams(ctx context.Context, offset, limit int, s
 	}
 
 	// Apply pagination
-	err := db.Offset(offset).Limit(limit).Find(&jobs).Error
+	err := db.Preload("Company").Preload("Tags.Tag").Offset(offset).Limit(limit).Find(&jobs).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -192,11 +212,19 @@ func (r *jobRepository) UpdateError(ctx context.Context, jobID string, errorMsg 
 
 func (r *jobRepository) FindByStatus(ctx context.Context, status models.JobStatus) ([]models.TranscriptionJob, error) {
 	var jobs []models.TranscriptionJob
-	err := r.db.WithContext(ctx).Where("status = ?", status).Find(&jobs).Error
+	err := r.db.WithContext(ctx).Where("status = ?", status).
+		Order("classification_attempted_at IS NULL DESC").
+		Order("classification_attempted_at ASC").
+		Order("created_at ASC").Find(&jobs).Error
 	if err != nil {
 		return nil, err
 	}
 	return jobs, nil
+}
+
+func (r *jobRepository) MarkClassificationAttempted(ctx context.Context, jobID string) error {
+	return r.db.WithContext(ctx).Model(&models.TranscriptionJob{}).
+		Where("id = ?", jobID).Update("classification_attempted_at", time.Now()).Error
 }
 
 func (r *jobRepository) CountByStatus(ctx context.Context, status models.JobStatus) (int64, error) {

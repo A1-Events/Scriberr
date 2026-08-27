@@ -37,6 +37,7 @@ const RecordingLabels: React.FC<{ jobId: string }> = ({ jobId }) => {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [available, setAvailable] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -57,7 +58,7 @@ const RecordingLabels: React.FC<{ jobId: string }> = ({ jobId }) => {
         setCompanyId(data.company_id ?? null);
         const links: JobTag[] = data.tags ?? [];
         setTagIds(links.map((l) => l.tag_id));
-        setWasAuto(links.some((l) => l.source === "auto"));
+        setWasAuto(data.company_source === "auto" || links.some((l) => l.source === "auto"));
       }
     } catch {
       setAvailable(false);
@@ -70,15 +71,22 @@ const RecordingLabels: React.FC<{ jobId: string }> = ({ jobId }) => {
 
   const save = async () => {
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`/api/v1/transcription/${jobId}/labels`, {
+      const response = await fetch(`/api/v1/transcription/${jobId}/labels`, {
         method: "PUT",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ company_id: companyId, tag_ids: tagIds }),
       });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Could not save labels");
+      }
       setEditing(false);
       setWasAuto(false);
       await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save labels");
     } finally {
       setBusy(false);
     }
@@ -163,6 +171,7 @@ const RecordingLabels: React.FC<{ jobId: string }> = ({ jobId }) => {
       <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { setEditing(false); load(); }}>
         Cancel
       </Button>
+      {error && <span className="text-red-500">{error}</span>}
     </div>
   );
 };

@@ -469,6 +469,31 @@ func speakerNames(result *interfaces.TranscriptResult) []string {
 	return out
 }
 
+// namedSpeakersForJob resolves diarizer labels (SPEAKER_00, etc.) through the
+// voice library. Raw labels carry no useful business signal, so only confirmed
+// or confidently matched names are sent to the classifier.
+func (u *UnifiedTranscriptionService) namedSpeakersForJob(ctx context.Context, jobID string, labels []string) []string {
+	if u.voiceLibrary == nil || len(labels) == 0 {
+		return nil
+	}
+	suggestions, err := u.voiceLibrary.SuggestionsForJob(ctx, jobID)
+	if err != nil {
+		logger.Warn("Classification: could not resolve speaker names", "job_id", jobID, "error", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, label := range labels {
+		match, ok := suggestions[label]
+		if !ok || match.Name == "" || seen[match.Name] {
+			continue
+		}
+		seen[match.Name] = true
+		names = append(names, match.Name)
+	}
+	return names
+}
+
 // processMultiTrackJob handles multi-track audio processing
 func (u *UnifiedTranscriptionService) processMultiTrackJob(ctx context.Context, job *models.TranscriptionJob) error {
 	logger.Info("Processing multi-track job", "job_id", job.ID, "track_count", len(job.MultiTrackFiles))

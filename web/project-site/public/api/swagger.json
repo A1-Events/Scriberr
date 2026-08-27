@@ -971,6 +971,48 @@
                 }
             }
         },
+        "/api/v1/companies": {
+            "get": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "List companies",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.Company"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Create a company",
+                "responses": {}
+            }
+        },
+        "/api/v1/companies/{id}": {
+            "put": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Rename a company",
+                "responses": {}
+            },
+            "delete": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Delete a company (its recordings become unclassified)",
+                "responses": {}
+            }
+        },
         "/api/v1/config/openai/validate": {
             "post": {
                 "security": [
@@ -2016,6 +2058,58 @@
                 }
             }
         },
+        "/api/v1/tags": {
+            "get": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "List project tags",
+                "responses": {}
+            },
+            "post": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Create a project tag",
+                "responses": {}
+            }
+        },
+        "/api/v1/tags/backfill": {
+            "post": {
+                "description": "Uses each recording's STORED transcript, so nothing is re-transcribed. Labels are written as machine guesses (source=auto), never as human corrections.",
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Classify finished recordings that have no company yet",
+                "responses": {}
+            }
+        },
+        "/api/v1/tags/{id}": {
+            "put": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Rename or re-scope a tag",
+                "responses": {}
+            },
+            "delete": {
+                "description": "Pass ?reassign_to=\u003ctagID\u003e to re-point affected recordings instead of dropping the label.",
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Delete a tag, optionally moving its recordings to another one",
+                "responses": {}
+            }
+        },
+        "/api/v1/tags/{id}/usage": {
+            "get": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "How many recordings carry this tag",
+                "responses": {}
+            }
+        },
         "/api/v1/transcription/list": {
             "get": {
                 "security": [
@@ -2071,6 +2165,18 @@
                         "type": "string",
                         "description": "Search in title and audio filename",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by company",
+                        "name": "company_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by project tag",
+                        "name": "tag_id",
                         "in": "query"
                     },
                     {
@@ -2882,6 +2988,22 @@
                         }
                     }
                 }
+            }
+        },
+        "/api/v1/transcription/{id}/labels": {
+            "get": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Get a recording's company and tags",
+                "responses": {}
+            },
+            "put": {
+                "tags": [
+                    "tagging"
+                ],
+                "summary": "Set a recording's company and tags (marks them as a human correction)",
+                "responses": {}
             }
         },
         "/api/v1/transcription/{id}/merge-status": {
@@ -4444,6 +4566,26 @@
                 }
             }
         },
+        "models.Company": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.JobStatus": {
             "type": "string",
             "enum": [
@@ -4460,6 +4602,32 @@
                 "StatusCompleted",
                 "StatusFailed"
             ]
+        },
+        "models.JobTag": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "tag": {
+                    "$ref": "#/definitions/models.Tag"
+                },
+                "tag_id": {
+                    "type": "integer"
+                },
+                "transcription_job_id": {
+                    "type": "string"
+                }
+            }
         },
         "models.MultiTrackFile": {
             "type": "object",
@@ -4624,6 +4792,32 @@
                 }
             }
         },
+        "models.Tag": {
+            "type": "object",
+            "properties": {
+                "company": {
+                    "$ref": "#/definitions/models.Company"
+                },
+                "company_id": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.TranscriptionJob": {
             "type": "object",
             "properties": {
@@ -4631,6 +4825,19 @@
                     "type": "string"
                 },
                 "aup_file_path": {
+                    "type": "string"
+                },
+                "company": {
+                    "$ref": "#/definitions/models.Company"
+                },
+                "company_confidence": {
+                    "type": "number"
+                },
+                "company_id": {
+                    "description": "Grouping: exactly one company (nullable = not yet classified). Projects\nare many and live in JobTag. CompanySource distinguishes an LLM guess\nfrom a user correction — see models/tagging.go.",
+                    "type": "integer"
+                },
+                "company_source": {
                     "type": "string"
                 },
                 "created_at": {
@@ -4688,6 +4895,12 @@
                 },
                 "summary": {
                     "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.JobTag"
+                    }
                 },
                 "title": {
                     "type": "string"

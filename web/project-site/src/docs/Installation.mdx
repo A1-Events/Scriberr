@@ -55,6 +55,7 @@ Scriberr works out of the box. However, for Homebrew or manual installations, yo
 | `TRANSCRIPTS_DIR` | Directory for storing transcripts. | `data/transcripts` |
 | `WHISPERX_ENV` | Path to the managed Python environment for models. | `data/whisperx-env` |
 | `OPENAI_API_KEY` | API Key for OpenAI (optional). | `""` |
+| `AUTO_CLASSIFY` | Set to `on` to classify completed transcripts into the configured companies and projects using the active LLM. Transcript excerpts are sent to that provider. | `off` |
 | `JWT_SECRET` | Secret for signing JWTs. Auto-generated if not set. | Auto-generated |
 
 **Example `.env` file:**

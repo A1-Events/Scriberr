@@ -499,6 +499,90 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/companies",
+      "summary": "List companies",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/companies",
+      "summary": "Create a company",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/companies/{id}",
+      "summary": "Rename a company",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/companies/{id}",
+      "summary": "Delete a company (its recordings become unclassified)",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tags",
+      "summary": "List project tags",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tags",
+      "summary": "Create a project tag",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/tags/{id}",
+      "summary": "Rename or re-scope a tag",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tags/{id}/usage",
+      "summary": "How many recordings carry this tag",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/tags/{id}",
+      "summary": "Delete a tag, optionally moving its recordings to another one",
+      "description": "Pass ?reassign_to=<tagID> to re-point affected recordings instead of dropping the label.",
+      "tag": "tagging"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transcription/{id}/labels",
+      "summary": "Get a recording's company and tags",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/transcription/{id}/labels",
+      "summary": "Set a recording's company and tags (marks them as a human correction)",
+      "description": "",
+      "tag": "tagging"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tags/backfill",
+      "summary": "Classify finished recordings that have no company yet",
+      "description": "Uses each recording's STORED transcript, so nothing is re-transcribed. Labels are written as machine guesses (source=auto), never as human corrections.",
+      "tag": "tagging"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/voice-library",
       "summary": "",
       "description": "",

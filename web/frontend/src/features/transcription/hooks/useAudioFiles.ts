@@ -14,6 +14,28 @@ export interface AudioFile {
     individual_transcripts?: any;
     speakers?: number;
     duration?: number;
+    company_id?: number;
+    company?: CompanyLabel;
+    tags?: JobTagLabel[];
+}
+
+export interface CompanyLabel {
+    id: number;
+    key: string;
+    name: string;
+}
+
+export interface ProjectTagLabel {
+    id: number;
+    key: string;
+    name: string;
+    company_id: number | null;
+}
+
+export interface JobTagLabel {
+    tag_id: number;
+    source: "auto" | "manual";
+    tag?: ProjectTagLabel;
 }
 
 export interface AudioFilesResponse {
@@ -32,6 +54,8 @@ interface AudioListParams {
     search?: string;
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
+    companyId?: number | null;
+    tagId?: number | null;
 }
 
 export function useAudioList(params: AudioListParams) {
@@ -46,6 +70,8 @@ export function useAudioList(params: AudioListParams) {
             });
 
             if (params.search) searchParams.set('q', params.search);
+            if (params.companyId) searchParams.set('company_id', params.companyId.toString());
+            if (params.tagId) searchParams.set('tag_id', params.tagId.toString());
             if (params.sortBy) {
                 searchParams.set('sort_by', params.sortBy);
                 searchParams.set('sort_order', params.sortOrder || 'desc');
@@ -78,6 +104,8 @@ export function useAudioListInfinite(params: Omit<AudioListParams, 'page'>) {
             });
 
             if (params.search) searchParams.set('q', params.search);
+            if (params.companyId) searchParams.set('company_id', params.companyId.toString());
+            if (params.tagId) searchParams.set('tag_id', params.tagId.toString());
             if (params.sortBy) {
                 searchParams.set('sort_by', params.sortBy);
                 searchParams.set('sort_order', params.sortOrder || 'desc');
