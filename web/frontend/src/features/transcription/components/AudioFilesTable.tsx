@@ -36,7 +36,12 @@ import { TranscriptionConfigDialog, type WhisperXParams } from "@/components/Tra
 import { TranscribeDDialog } from "@/components/TranscribeDDialog";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/features/auth/hooks/useAuth";
-import { useAudioListInfinite, type AudioFile } from "@/features/transcription/hooks/useAudioFiles";
+import {
+	useAudioListInfinite,
+	type AudioFile,
+	type CompanyLabel,
+	type ProjectTagLabel,
+} from "@/features/transcription/hooks/useAudioFiles";
 import { useTranscriptionEvents } from "@/features/transcription/hooks/useTranscriptionEvents";
 
 const JobStatusMonitor = memo(function JobStatusMonitor({ jobId }: { jobId: string }) {
@@ -68,6 +73,32 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 		{ id: "created_at", desc: true }
 	];
 	const [globalFilter, setGlobalFilter] = useState("");
+	const [companyFilter, setCompanyFilter] = useState<number | null>(null);
+	const [tagFilter, setTagFilter] = useState<number | null>(null);
+	const [companies, setCompanies] = useState<CompanyLabel[]>([]);
+	const [projectTags, setProjectTags] = useState<ProjectTagLabel[]>([]);
+
+	useEffect(() => {
+		let cancelled = false;
+		const loadTaxonomy = async () => {
+			try {
+				const [companyResponse, tagResponse] = await Promise.all([
+					fetch("/api/v1/companies", { headers: { ...getAuthHeaders() } }),
+					fetch("/api/v1/tags", { headers: { ...getAuthHeaders() } }),
+				]);
+				if (cancelled || !companyResponse.ok || !tagResponse.ok) return;
+				setCompanies(await companyResponse.json());
+				setProjectTags(await tagResponse.json());
+			} catch {
+				// Tagging is optional in upstream deployments; the library still works
+				// without taxonomy controls.
+			}
+		};
+		void loadTaxonomy();
+		return () => {
+			cancelled = true;
+		};
+	}, [getAuthHeaders]);
 
 	// Query
 	const {
@@ -81,8 +112,15 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 		limit: 20, // Fetch 20 items per page
 		search: globalFilter,
 		sortBy: sorting[0]?.id,
-		sortOrder: sorting[0]?.desc ? 'desc' : 'asc'
+		sortOrder: sorting[0]?.desc ? 'desc' : 'asc',
+		companyId: companyFilter,
+		tagId: tagFilter,
 	});
+
+	const selectableProjectTags = useMemo(
+		() => projectTags.filter((tag) => companyFilter === null || tag.company_id === null || tag.company_id === companyFilter),
+		[projectTags, companyFilter],
+	);
 
 	// Get active jobs for real-time monitoring
 	const activeJobs = useMemo(() => {
@@ -732,13 +770,48 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 	return (
 		<div className="space-y-6">
 			{/* Toolbar */}
-			<div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+			<div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
 				<DebouncedSearchInput
 					placeholder="Search recordings..."
 					value={globalFilter ?? ""}
 					onChange={(value) => setGlobalFilter(String(value))}
-					className="w-full sm:w-80 shadow-sm border-transparent focus:border-[var(--brand-solid)] bg-white dark:bg-zinc-900"
+					className="w-full lg:w-80 shadow-sm border-transparent focus:border-[var(--brand-solid)] bg-white dark:bg-zinc-900"
 				/>
+				{companies.length > 0 && (
+					<div className="flex flex-col sm:flex-row gap-2">
+						<select
+							aria-label="Filter by company"
+							className="h-10 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 text-sm"
+							value={companyFilter ?? ""}
+							onChange={(event) => {
+								const next = event.target.value ? Number(event.target.value) : null;
+								setCompanyFilter(next);
+								setTagFilter((current) => {
+									const selected = projectTags.find((tag) => tag.id === current);
+									return selected && next !== null && selected.company_id !== null && selected.company_id !== next
+										? null
+										: current;
+								});
+							}}
+						>
+							<option value="">All companies</option>
+							{companies.map((company) => (
+								<option key={company.id} value={company.id}>{company.name}</option>
+							))}
+						</select>
+						<select
+							aria-label="Filter by project"
+							className="h-10 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 text-sm"
+							value={tagFilter ?? ""}
+							onChange={(event) => setTagFilter(event.target.value ? Number(event.target.value) : null)}
+						>
+							<option value="">All projects</option>
+							{selectableProjectTags.map((tag) => (
+								<option key={tag.id} value={tag.id}>{tag.name}</option>
+							))}
+						</select>
+					</div>
+				)}
 			</div>
 
 			{/* List Container */}
@@ -799,8 +872,18 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 											<h4 className="font-normal text-gray-900 dark:text-gray-100 truncate text-lg leading-tight group-hover:text-[#FF6D20] transition-colors">
 												{file.title || getFileName(file.audio_path)}
 											</h4>
-											<div className="flex items-center gap-1.5 mt-1 text-sm text-gray-500">
-												{formatDate(file.created_at)}
+											<div className="flex items-center gap-1.5 mt-1 text-sm text-gray-500 flex-wrap">
+												<span>{formatDate(file.created_at)}</span>
+												{file.company && (
+													<span className="rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
+														{file.company.name}
+													</span>
+												)}
+												{file.tags?.map((link) => link.tag && (
+													<span key={link.tag_id} className="rounded-full bg-[var(--bg-main)] px-2 py-0.5 text-xs text-[var(--text-tertiary)]">
+														{link.tag.name}
+													</span>
+												))}
 											</div>
 										</div>
 									</div>

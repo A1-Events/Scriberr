@@ -917,6 +917,8 @@ func (h *Handler) GetTranscript(c *gin.Context) {
 // @Param sort_order query string false "Sort Order (asc/desc)"
 // @Param status query string false "Filter by status"
 // @Param q query string false "Search in title and audio filename"
+// @Param company_id query int false "Filter by company"
+// @Param tag_id query int false "Filter by project tag"
 // @Param updated_after query string false "Filter by updated_at > timestamp (RFC3339)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 500 {object} map[string]string
@@ -932,6 +934,25 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 	sortOrder := c.Query("sort_order")
 	searchQuery := c.Query("q")
 	updatedAfterStr := c.Query("updated_after")
+	filters := repository.JobListFilters{}
+	if raw := c.Query("company_id"); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || value == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "company_id must be a positive integer"})
+			return
+		}
+		id := uint(value)
+		filters.CompanyID = &id
+	}
+	if raw := c.Query("tag_id"); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || value == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tag_id must be a positive integer"})
+			return
+		}
+		id := uint(value)
+		filters.TagID = &id
+	}
 
 	var updatedAfter *time.Time
 	if updatedAfterStr != "" {
@@ -940,7 +961,7 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 		}
 	}
 
-	jobs, total, err := h.jobRepo.ListWithParams(c.Request.Context(), offset, limit, sortBy, sortOrder, searchQuery, updatedAfter)
+	jobs, total, err := h.jobRepo.ListWithParams(c.Request.Context(), offset, limit, sortBy, sortOrder, searchQuery, updatedAfter, filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list jobs"})
 		return

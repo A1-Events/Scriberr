@@ -234,12 +234,12 @@ func (h *Handler) GetTranscriptionLabels(c *gin.Context) {
 		return
 	}
 	jobID := c.Param("id")
-	companyID, links, err := h.taggingRepo.LabelsForJob(c.Request.Context(), jobID)
+	companyID, companySource, links, err := h.taggingRepo.LabelsForJob(c.Request.Context(), jobID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"company_id": companyID, "tags": links})
+	c.JSON(http.StatusOK, gin.H{"company_id": companyID, "company_source": companySource, "tags": links})
 }
 
 // UpdateTranscriptionLabels godoc

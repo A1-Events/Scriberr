@@ -302,6 +302,16 @@ func (suite *APIHandlerTestSuite) TestListTranscriptionJobs() {
 	assert.True(suite.T(), foundJob)
 }
 
+func (suite *APIHandlerTestSuite) TestListTranscriptionJobsRejectsInvalidLabelFilters() {
+	for _, path := range []string{
+		"/api/v1/transcription/list?company_id=not-a-number",
+		"/api/v1/transcription/list?tag_id=0",
+	} {
+		w := suite.makeAuthenticatedRequest("GET", path, nil, false)
+		assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
+	}
+}
+
 // Test transcription job listing with delta sync
 func (suite *APIHandlerTestSuite) TestListTranscriptionJobsDeltaSync() {
 	// 1. Create a job

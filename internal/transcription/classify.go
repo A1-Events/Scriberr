@@ -47,11 +47,12 @@ type classifyResult struct {
 	Confidence float64  `json:"confidence"`
 }
 
-// classifyJob labels one finished job. Never returns an error: classification
-// is best-effort and must not fail the transcription.
-func (u *UnifiedTranscriptionService) classifyJob(ctx context.Context, jobID string, transcript string, speakers []string) {
+// classifyJob labels one finished job. The return value reports whether an LLM
+// request was made; classification is best-effort and must not fail the
+// transcription.
+func (u *UnifiedTranscriptionService) classifyJob(ctx context.Context, jobID string, transcript string, speakers []string) bool {
 	if u.taggingRepo == nil || !classificationEnabled() || strings.TrimSpace(transcript) == "" {
-		return
+		return false
 	}
 	// Never clobber a human's labels. The same job is re-classified whenever it
 	// is re-transcribed (the start endpoint is reused for re-runs), so without
@@ -62,23 +63,23 @@ func (u *UnifiedTranscriptionService) classifyJob(ctx context.Context, jobID str
 		if manual {
 			logger.Info("Classification skipped — labels were set by hand", "job_id", jobID)
 		}
-		return
+		return false
 	}
 	svc, model := u.llmServiceForCorrection(ctx)
 	if svc == nil {
 		logger.Info("Classification enabled but no usable LLM config/model — skipping")
-		return
+		return false
 	}
 
 	companies, err := u.taggingRepo.ListCompanies(ctx)
 	if err != nil || len(companies) == 0 {
 		logger.Warn("Classification: no taxonomy configured — skipping", "error", err)
-		return
+		return false
 	}
 	tags, err := u.taggingRepo.ListTags(ctx)
 	if err != nil {
 		logger.Warn("Classification: could not load tags — skipping", "error", err)
-		return
+		return false
 	}
 
 	system := buildClassifyPrompt(companies, tags)
@@ -86,6 +87,7 @@ func (u *UnifiedTranscriptionService) classifyJob(ctx context.Context, jobID str
 		system += "\n\n" + renderExamples(examples)
 	}
 
+	speakers = u.namedSpeakersForJob(ctx, jobID, speakers)
 	user := excerpt(transcript, classifyExcerptChars)
 	if len(speakers) > 0 {
 		// Who is in the room predicts the company well — often better than the
@@ -99,13 +101,13 @@ func (u *UnifiedTranscriptionService) classifyJob(ctx context.Context, jobID str
 	}, 0.0)
 	if err != nil || resp == nil || len(resp.Choices) == 0 {
 		logger.Warn("Classification: LLM call failed — leaving unlabelled", "error", err)
-		return
+		return true
 	}
 
 	var out classifyResult
 	if err := json.Unmarshal([]byte(extractJSONObject(resp.Choices[0].Message.Content)), &out); err != nil {
 		logger.Warn("Classification: unparseable response — leaving unlabelled", "error", err)
-		return
+		return true
 	}
 
 	companyID, ok := companyIDForKey(companies, out.Company)
@@ -113,17 +115,18 @@ func (u *UnifiedTranscriptionService) classifyJob(ctx context.Context, jobID str
 		// The model may only choose from the curated taxonomy; anything else is
 		// treated as "don't know" so the taxonomy cannot drift on its own.
 		logger.Warn("Classification: unknown company key — leaving unlabelled", "key", out.Company)
-		return
+		return true
 	}
 	tagIDs := tagIDsForKeys(tags, out.Tags, companyID)
 
 	conf := out.Confidence
 	if err := u.taggingRepo.SetLabels(ctx, jobID, &companyID, tagIDs, models.SourceAuto, &conf); err != nil {
 		logger.Warn("Classification: could not save labels", "error", err)
-		return
+		return true
 	}
 	logger.Info("Recording classified", "job_id", jobID, "company", out.Company,
 		"tags", strings.Join(out.Tags, ","), "confidence", conf)
+	return true
 }
 
 func buildClassifyPrompt(companies []models.Company, tags []models.Tag) string {
@@ -169,8 +172,9 @@ func renderExamples(examples []repository.CorrectedExample) string {
 		if ex.CompanyKey == "" {
 			continue
 		}
+		text, _ := flattenStored(ex.Transcript)
 		fmt.Fprintf(&b, "- [%s / %s] %s\n", ex.CompanyKey, strings.Join(ex.TagKeys, "+"),
-			strings.ReplaceAll(excerpt(ex.Transcript, classifyExampleChars), "\n", " "))
+			strings.ReplaceAll(excerpt(text, classifyExampleChars), "\n", " "))
 	}
 	return b.String()
 }
@@ -208,10 +212,11 @@ func tagIDsForKeys(tags []models.Tag, keys []string, companyID uint) []uint {
 
 func excerpt(s string, n int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n]
+	return string(runes[:n])
 }
 
 // extractJSONObject pulls the first {...} block out of a reply that may be
@@ -293,6 +298,9 @@ func (u *UnifiedTranscriptionService) ClassifyExisting(ctx context.Context, limi
 	if u.taggingRepo == nil {
 		return 0, 0, fmt.Errorf("tagging is not enabled")
 	}
+	if !classificationEnabled() {
+		return 0, 0, fmt.Errorf("automatic classification is disabled (set AUTO_CLASSIFY=on)")
+	}
 	jobs, err := u.jobRepo.FindByStatus(ctx, models.StatusCompleted)
 	if err != nil {
 		return 0, 0, err
@@ -314,12 +322,15 @@ func (u *UnifiedTranscriptionService) ClassifyExisting(ctx context.Context, limi
 			skipped++
 			continue
 		}
+		if !u.classifyJob(ctx, job.ID, text, speakers) {
+			skipped++
+			continue
+		}
 		attempted++
-		u.classifyJob(ctx, job.ID, text, speakers)
 		// classifyJob is fail-safe and stays silent on error, so re-read to see
 		// whether it took. Jobs that already had a company were skipped above,
 		// so a company here means this pass set it.
-		if cid, _, err := u.taggingRepo.LabelsForJob(ctx, job.ID); err == nil && cid != nil {
+		if cid, _, _, err := u.taggingRepo.LabelsForJob(ctx, job.ID); err == nil && cid != nil {
 			classified++
 		} else {
 			skipped++

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Building2, Trash2, Check, Pencil, Plus, X } from "lucide-react";
+import { Loader2, Building2, Trash2, Check, Pencil, Plus, Sparkles, X } from "lucide-react";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 
 interface Company {
@@ -31,6 +31,8 @@ const TaxonomySettings: React.FC = () => {
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isClassifying, setIsClassifying] = useState(false);
+  const [classificationResult, setClassificationResult] = useState<string | null>(null);
 
   const [editingCompanyId, setEditingCompanyId] = useState<number | null>(null);
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
@@ -42,6 +44,7 @@ const TaxonomySettings: React.FC = () => {
     name: "",
     company_id: null,
   });
+  const [deletingCompany, setDeletingCompany] = useState<Company | null>(null);
 
   // Tag pending deletion, with how many recordings it affects and where they go.
   const [deleting, setDeleting] = useState<{ tag: Tag; usage: number; reassignTo: number | null } | null>(null);
@@ -91,10 +94,11 @@ const TaxonomySettings: React.FC = () => {
   const startDelete = async (tag: Tag) => {
     try {
       const res = await fetch(`/api/v1/tags/${tag.id}/usage`, { headers: { ...getAuthHeaders() } });
-      const usage = res.ok ? (await res.json()).recordings ?? 0 : 0;
+      if (!res.ok) throw new Error("Could not check project usage");
+      const usage = (await res.json()).recordings ?? 0;
       setDeleting({ tag, usage, reassignTo: null });
-    } catch {
-      setDeleting({ tag, usage: 0, reassignTo: null });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not check project usage");
     }
   };
 
@@ -105,6 +109,28 @@ const TaxonomySettings: React.FC = () => {
       await send(`/api/v1/tags/${deleting.tag.id}${q}`, "DELETE");
       setDeleting(null);
     });
+  };
+
+  const classifyExisting = async () => {
+    setIsClassifying(true);
+    setError(null);
+    setClassificationResult(null);
+    try {
+      const res = await fetch("/api/v1/tags/backfill?limit=10", {
+        method: "POST",
+        headers: { ...getAuthHeaders() },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Classification failed");
+      setClassificationResult(
+        `Classified ${data.classified ?? 0} recording${data.classified === 1 ? "" : "s"}; ` +
+          `${data.skipped ?? 0} skipped. Run again to continue through the library.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Classification failed");
+    } finally {
+      setIsClassifying(false);
+    }
   };
 
   if (isLoading) {
@@ -172,7 +198,7 @@ const TaxonomySettings: React.FC = () => {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => run(() => send(`/api/v1/companies/${c.id}`, "DELETE"))}
+                        onClick={() => setDeletingCompany(c)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -252,6 +278,35 @@ const TaxonomySettings: React.FC = () => {
         </CardContent>
       </Card>
 
+      {deletingCompany && (
+        <Card className="border-red-500/40">
+          <CardHeader>
+            <CardTitle className="text-base">Delete “{deletingCompany.name}”?</CardTitle>
+            <CardDescription>
+              Its recordings become unclassified. Its projects remain available to every company.
+              Audio and transcripts are not deleted.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() =>
+                run(async () => {
+                  await send(`/api/v1/companies/${deletingCompany.id}`, "DELETE");
+                  setDeletingCompany(null);
+                })
+              }
+            >
+              Delete company
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setDeletingCompany(null)}>
+              Cancel
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Add</CardTitle>
@@ -324,6 +379,27 @@ const TaxonomySettings: React.FC = () => {
               <Plus className="h-4 w-4" /> Project
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sparkles className="h-4 w-4" /> Classify existing recordings
+          </CardTitle>
+          <CardDescription>
+            File up to 10 unlabelled transcripts per run. This uses the configured LLM and learns
+            from labels you corrected by hand.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Button size="sm" onClick={classifyExisting} disabled={isClassifying || companies.length === 0}>
+            {isClassifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            Classify next 10
+          </Button>
+          {classificationResult && (
+            <div className="text-sm text-[var(--text-secondary)]">{classificationResult}</div>
+          )}
         </CardContent>
       </Card>
 
