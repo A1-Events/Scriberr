@@ -63,6 +63,7 @@ type JobRepository interface {
 	UpdateStatus(ctx context.Context, jobID string, status models.JobStatus) error
 	UpdateError(ctx context.Context, jobID string, errorMsg string) error
 	FindByStatus(ctx context.Context, status models.JobStatus) ([]models.TranscriptionJob, error)
+	MarkClassificationAttempted(ctx context.Context, jobID string) error
 	CountByStatus(ctx context.Context, status models.JobStatus) (int64, error)
 	UpdateSummary(ctx context.Context, jobID string, summary string) error
 }
@@ -211,11 +212,19 @@ func (r *jobRepository) UpdateError(ctx context.Context, jobID string, errorMsg 
 
 func (r *jobRepository) FindByStatus(ctx context.Context, status models.JobStatus) ([]models.TranscriptionJob, error) {
 	var jobs []models.TranscriptionJob
-	err := r.db.WithContext(ctx).Where("status = ?", status).Find(&jobs).Error
+	err := r.db.WithContext(ctx).Where("status = ?", status).
+		Order("classification_attempted_at IS NULL DESC").
+		Order("classification_attempted_at ASC").
+		Order("created_at ASC").Find(&jobs).Error
 	if err != nil {
 		return nil, err
 	}
 	return jobs, nil
+}
+
+func (r *jobRepository) MarkClassificationAttempted(ctx context.Context, jobID string) error {
+	return r.db.WithContext(ctx).Model(&models.TranscriptionJob{}).
+		Where("id = ?", jobID).Update("classification_attempted_at", time.Now()).Error
 }
 
 func (r *jobRepository) CountByStatus(ctx context.Context, status models.JobStatus) (int64, error) {

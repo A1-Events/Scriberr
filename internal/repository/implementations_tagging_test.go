@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,29 @@ func TestListWithParamsFiltersAndPreloadsLabels(t *testing.T) {
 	require.Equal(t, jobs[0].ID, projectJobs[0].ID)
 	require.Len(t, projectJobs[0].Tags, 1)
 	require.Equal(t, projectA.ID, projectJobs[0].Tags[0].Tag.ID)
+}
+
+func TestFindByStatusPrioritizesUnattemptedClassificationCandidates(t *testing.T) {
+	db := newTaggingTestDB(t)
+	oldAttempt := time.Now().Add(-time.Hour)
+	newAttempt := time.Now()
+	jobs := []models.TranscriptionJob{
+		{ID: "attempted-new", AudioPath: "/audio/new.mp3", Status: models.StatusCompleted, ClassificationAttemptedAt: &newAttempt},
+		{ID: "unattempted", AudioPath: "/audio/unattempted.mp3", Status: models.StatusCompleted},
+		{ID: "attempted-old", AudioPath: "/audio/old.mp3", Status: models.StatusCompleted, ClassificationAttemptedAt: &oldAttempt},
+	}
+	for i := range jobs {
+		require.NoError(t, db.Create(&jobs[i]).Error)
+	}
+
+	got, err := NewJobRepository(db).FindByStatus(context.Background(), models.StatusCompleted)
+	require.NoError(t, err)
+	require.Equal(t, []string{"unattempted", "attempted-old", "attempted-new"}, []string{got[0].ID, got[1].ID, got[2].ID})
+
+	require.NoError(t, NewJobRepository(db).MarkClassificationAttempted(context.Background(), "unattempted"))
+	got, err = NewJobRepository(db).FindByStatus(context.Background(), models.StatusCompleted)
+	require.NoError(t, err)
+	require.Equal(t, []string{"attempted-old", "attempted-new", "unattempted"}, []string{got[0].ID, got[1].ID, got[2].ID})
 }
 
 func TestSetLabelsRejectsCrossCompanyProjectsAndDeduplicates(t *testing.T) {
@@ -157,6 +181,33 @@ func TestUpdateTagIgnoresSoftDeletedRecordingsWhenScoping(t *testing.T) {
 	var updated models.Tag
 	require.NoError(t, db.First(&updated, project.ID).Error)
 	require.Equal(t, companyA.ID, *updated.CompanyID)
+}
+
+func TestTaxonomyMutationsInvalidateRecordingDeltaRows(t *testing.T) {
+	db := newTaggingTestDB(t)
+	company := models.Company{Key: "A", Name: "Company A"}
+	require.NoError(t, db.Create(&company).Error)
+	project := models.Tag{Key: "PROJECT", Name: "Project", CompanyID: &company.ID}
+	require.NoError(t, db.Create(&project).Error)
+	job := models.TranscriptionJob{ID: "job", AudioPath: "/audio/job.mp3", CompanyID: &company.ID}
+	require.NoError(t, db.Create(&job).Error)
+	require.NoError(t, db.Create(&models.JobTag{
+		TranscriptionJobID: job.ID, TagID: project.ID, Source: models.SourceManual,
+	}).Error)
+	watermark := time.Now().Add(-time.Minute)
+	require.NoError(t, db.Model(&models.TranscriptionJob{}).Where("id = ?", job.ID).
+		UpdateColumn("updated_at", watermark).Error)
+
+	repo := NewTaggingRepository(db)
+	require.NoError(t, repo.UpdateTag(context.Background(), project.ID, "Renamed", &company.ID))
+
+	jobs, total, err := NewJobRepository(db).ListWithParams(
+		context.Background(), 0, 20, "", "", "", &watermark, JobListFilters{},
+	)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, jobs, 1)
+	require.Equal(t, "Renamed", jobs[0].Tags[0].Tag.Name)
 }
 
 func newTaggingTestDB(t *testing.T) *gorm.DB {

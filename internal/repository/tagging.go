@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -66,14 +67,29 @@ func (r *taggingRepository) CreateCompany(ctx context.Context, c *models.Company
 }
 
 func (r *taggingRepository) UpdateCompany(ctx context.Context, id uint, name string) error {
-	return r.db.WithContext(ctx).Model(&models.Company{}).Where("id = ?", id).
-		Update("name", name).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Company{}).Where("id = ?", id).Update("name", name)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return touchJobs(tx, tx.Model(&models.TranscriptionJob{}).Select("id").Where("company_id = ?", id))
+	})
 }
 
 // DeleteCompany clears the company off its recordings (FK is ON DELETE SET
 // NULL) rather than deleting them; its tags become global.
 func (r *taggingRepository) DeleteCompany(ctx context.Context, id uint) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		affected := tx.Table("transcription_jobs").Select("transcription_jobs.id").
+			Joins("LEFT JOIN job_tags ON job_tags.transcription_job_id = transcription_jobs.id").
+			Joins("LEFT JOIN tags ON tags.id = job_tags.tag_id").
+			Where("transcription_jobs.company_id = ? OR tags.company_id = ?", id, id)
+		if err := touchJobs(tx, affected); err != nil {
+			return err
+		}
 		if err := tx.Model(&models.TranscriptionJob{}).Where("company_id = ?", id).
 			Updates(map[string]any{"company_id": nil, "company_source": nil, "company_confidence": nil}).Error; err != nil {
 			return err
@@ -120,7 +136,7 @@ func (r *taggingRepository) UpdateTag(ctx context.Context, id uint, name string,
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return nil
+		return touchJobs(tx, tx.Table("job_tags").Select("transcription_job_id").Where("tag_id = ?", id))
 	})
 }
 
@@ -151,6 +167,9 @@ func (r *taggingRepository) DeleteTag(ctx context.Context, id uint, reassignTo *
 		}
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := touchJobs(tx, tx.Table("job_tags").Select("transcription_job_id").Where("tag_id = ?", id)); err != nil {
+			return err
+		}
 		if reassignTo != nil {
 			// Move the affected recordings onto the replacement. Skip any that
 			// already carry it, otherwise the (job, tag) unique index trips.
@@ -190,6 +209,13 @@ func (r *taggingRepository) DeleteTag(ctx context.Context, id uint, reassignTo *
 		}
 		return tx.Delete(&models.Tag{}, id).Error
 	})
+}
+
+// touchJobs invalidates recording delta-sync rows when their embedded company
+// or project objects change without directly updating the recording itself.
+func touchJobs(tx *gorm.DB, ids *gorm.DB) error {
+	return tx.Model(&models.TranscriptionJob{}).Where("id IN (?)", ids).
+		Update("updated_at", time.Now()).Error
 }
 
 func (r *taggingRepository) SetLabels(ctx context.Context, jobID string, companyID *uint, tagIDs []uint, source string, confidence *float64) error {

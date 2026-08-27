@@ -28,6 +28,8 @@ type TranscriptionJob struct {
 	UpdatedAt             time.Time      `json:"updated_at" gorm:"autoUpdateTime"`
 	DeletedAt             gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index" swaggertype:"string"`
 
+	ClassificationAttemptedAt *time.Time `json:"-" gorm:"index"`
+
 	// WhisperX parameters
 	Parameters WhisperXParams `json:"parameters" gorm:"embedded"`
 

@@ -124,6 +124,11 @@ func (m *MockJobRepository) FindByStatus(ctx context.Context, status models.JobS
 	return args.Get(0).([]models.TranscriptionJob), args.Error(1)
 }
 
+func (m *MockJobRepository) MarkClassificationAttempted(ctx context.Context, jobID string) error {
+	args := m.Called(ctx, jobID)
+	return args.Error(0)
+}
+
 func (m *MockJobRepository) CountByStatus(ctx context.Context, status models.JobStatus) (int64, error) {
 	args := m.Called(ctx, status)
 	return args.Get(0).(int64), args.Error(1)

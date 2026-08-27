@@ -330,6 +330,12 @@ func (u *UnifiedTranscriptionService) ClassifyExisting(ctx context.Context, limi
 			continue
 		}
 		attempted++
+		// Rotate attempted failures behind untouched recordings. Without this
+		// durable cursor, the same malformed first page can starve the rest of
+		// the library forever on every "next 10" request.
+		if err := u.jobRepo.MarkClassificationAttempted(ctx, job.ID); err != nil {
+			return classified, skipped, fmt.Errorf("record classification attempt: %w", err)
+		}
 		// classifyJob is fail-safe and stays silent on error, so re-read to see
 		// whether it took. Jobs that already had a company were skipped above,
 		// so a company here means this pass set it.
