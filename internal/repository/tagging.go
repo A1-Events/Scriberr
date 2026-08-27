@@ -267,12 +267,16 @@ func (r *taggingRepository) SetLabels(ctx context.Context, jobID string, company
 			uniqueTagIDs = append(uniqueTagIDs, tagID)
 		}
 
+		jobUpdates := map[string]any{
+			"company_id":         companyID,
+			"company_source":     source,
+			"company_confidence": confidence,
+		}
+		if source == models.SourceManual {
+			jobUpdates["labels_corrected_at"] = time.Now()
+		}
 		if err := tx.Model(&models.TranscriptionJob{}).Where("id = ?", jobID).
-			Updates(map[string]any{
-				"company_id":         companyID,
-				"company_source":     source,
-				"company_confidence": confidence,
-			}).Error; err != nil {
+			Updates(jobUpdates).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("transcription_job_id = ?", jobID).Delete(&models.JobTag{}).Error; err != nil {
@@ -325,7 +329,7 @@ func (r *taggingRepository) CorrectedExamples(ctx context.Context, limit int) ([
 	var jobs []models.TranscriptionJob
 	if err := r.db.WithContext(ctx).
 		Where("company_source = ? AND company_id IS NOT NULL", models.SourceManual).
-		Order("updated_at DESC").Limit(limit).Find(&jobs).Error; err != nil {
+		Order("labels_corrected_at DESC").Order("created_at DESC").Limit(limit).Find(&jobs).Error; err != nil {
 		return nil, err
 	}
 	out := make([]CorrectedExample, 0, len(jobs))

@@ -210,6 +210,36 @@ func TestTaxonomyMutationsInvalidateRecordingDeltaRows(t *testing.T) {
 	require.Equal(t, "Renamed", jobs[0].Tags[0].Tag.Name)
 }
 
+func TestTaxonomyMutationDoesNotChangeCorrectionExampleRecency(t *testing.T) {
+	db := newTaggingTestDB(t)
+	company := models.Company{Key: "A", Name: "Company A"}
+	require.NoError(t, db.Create(&company).Error)
+	oldProject := models.Tag{Key: "OLD", Name: "Old project", CompanyID: &company.ID}
+	newProject := models.Tag{Key: "NEW", Name: "New project", CompanyID: &company.ID}
+	require.NoError(t, db.Create(&oldProject).Error)
+	require.NoError(t, db.Create(&newProject).Error)
+	oldJob := models.TranscriptionJob{ID: "old-correction", AudioPath: "/audio/old.mp3"}
+	newJob := models.TranscriptionJob{ID: "new-correction", AudioPath: "/audio/new.mp3"}
+	require.NoError(t, db.Create(&oldJob).Error)
+	require.NoError(t, db.Create(&newJob).Error)
+
+	repo := NewTaggingRepository(db)
+	require.NoError(t, repo.SetLabels(context.Background(), oldJob.ID, &company.ID, []uint{oldProject.ID}, models.SourceManual, nil))
+	require.NoError(t, repo.SetLabels(context.Background(), newJob.ID, &company.ID, []uint{newProject.ID}, models.SourceManual, nil))
+	oldCorrection := time.Now().Add(-time.Hour)
+	newCorrection := time.Now().Add(-time.Minute)
+	require.NoError(t, db.Model(&models.TranscriptionJob{}).Where("id = ?", oldJob.ID).
+		UpdateColumn("labels_corrected_at", oldCorrection).Error)
+	require.NoError(t, db.Model(&models.TranscriptionJob{}).Where("id = ?", newJob.ID).
+		UpdateColumn("labels_corrected_at", newCorrection).Error)
+
+	require.NoError(t, repo.UpdateTag(context.Background(), oldProject.ID, "Renamed old project", &company.ID))
+	examples, err := repo.CorrectedExamples(context.Background(), 1)
+	require.NoError(t, err)
+	require.Len(t, examples, 1)
+	require.Equal(t, newJob.ID, examples[0].JobID)
+}
+
 func newTaggingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

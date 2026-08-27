@@ -85,6 +85,17 @@ func Initialize(dbPath string) error {
 		return fmt.Errorf("failed to auto migrate: %v", err)
 	}
 
+	// Preserve the original correction ordering when introducing the dedicated
+	// label timestamp. Recording updated_at also drives delta sync and may move
+	// for unrelated taxonomy changes, so it cannot remain the learning cursor.
+	if err := DB.Exec(`
+		UPDATE transcription_jobs
+		SET labels_corrected_at = updated_at
+		WHERE company_source = ? AND labels_corrected_at IS NULL
+	`, models.SourceManual).Error; err != nil {
+		return fmt.Errorf("failed to initialize label correction timestamps: %v", err)
+	}
+
 	// Cleanup duplicate speaker mappings before creating unique index (for backward compatibility)
 	// Keep the latest mapping for each (job_id, original_speaker) pair
 	cleanupQuery := `
